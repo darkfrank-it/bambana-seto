@@ -1,0 +1,36 @@
+[package]
+name = "crono"
+description = "Tieni traccia di cosa stai facendo per report fogli presenza"
+authors = ["Nicola Danese <nicola.danese@e-projectsrl.it>"]
+include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
+version = "0.1.0"
+edition = "2024"
+# https://github.com/emilk/eframe_template/blob/main/Cargo.toml
+
+[dependencies]
+tokio = { version = "1.47.1", features = ["rt", "time", "macros", "rt-multi-thread", "signal"] }
+sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-native-tls"] }
+sysinfo = "0.37.0"
+winapi = { version = "0.3.9", features = ["winuser"] }
+chrono = "0.4"
+egui = "0.33.0"
+eframe = { version = "0.33.0", default-features = false, features = [
+    "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
+    "default_fonts", # Embed the default egui fonts.
+    "glow",          # Use the glow rendering backend. Alternative: "wgpu".
+    "persistence",   # Enable restoring app state when restarting the app.
+    "wayland",       # To support Linux (and CI)
+    "x11",           # To support older Linux distributions (restores one of the default features)
+] }
+log = "0.4.27"
+
+[dependencies.windows]
+version = "0.61.3"
+features = [    
+#    "Win32_Foundation",
+#    "Win32_Security",
+#    "Win32_System_Threading",
+#    "Win32_System_SystemInformation",
+   "Win32_UI_WindowsAndMessaging",
+#    "Win32_UI_Input_KeyboardAndMouse",
+]
