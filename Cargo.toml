@@ -1,5 +1,5 @@
 [package]
-name = "crono"
+name = "bambana-seto"
 description = "Tieni traccia di cosa stai facendo per report fogli presenza"
 authors = ["Nicola Danese <nicola.danese@e-projectsrl.it>"]
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]

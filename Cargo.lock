@@ -409,6 +409,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "bambana-seto"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "eframe",
+ "egui",
+ "log",
+ "sqlx",
+ "sysinfo",
+ "tokio",
+ "winapi",
+ "windows",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -727,21 +742,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "crono"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "eframe",
- "egui",
- "log",
- "sqlx",
- "sysinfo",
- "tokio",
- "winapi",
- "windows",
 ]
 
 [[package]]

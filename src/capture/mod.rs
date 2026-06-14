@@ -1,1 +1,1 @@
-pub mod idlesentinel;
+pub mod idle_sentinel;

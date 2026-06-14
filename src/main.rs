@@ -5,35 +5,35 @@ use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
-use crono::capture::idlesentinel;
-use crono::database::dbmanager::{self as dbmanager, StoredSession};
+use bambana_seto::capture::idle_sentinel as idleSentinel;
+use bambana_seto::database::db_manager::{self as dbManager, StoredSession};
 
 
 
 // entry point
 #[tokio::main]
 async fn main() -> eframe::Result {
-    let database_url = "sqlite:crono.db";
-    let db = dbmanager::open_db(database_url)
+    let database_url = "sqlite:.data/bambana.db";
+    let db = dbManager::open_db(database_url)
         .await
         .map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
 
-    let sessions = dbmanager::load_recent_sessions(&db)
+    let sessions = dbManager::load_recent_sessions(&db)
         .await
         .unwrap_or_default();
 
-    let pending_recovery = dbmanager::get_open_session(&db)
+    let pending_recovery = dbManager::get_open_session(&db)
         .await
         .unwrap_or(None);
 
     let table_data = sessions_to_table_data(&sessions);
     let (idle_tx, idle_rx) = unbounded_channel();
-    idlesentinel::start_idle_watcher(idle_tx);
+    idleSentinel::start_idle_watcher(idle_tx);
 
     let native_options = eframe::NativeOptions::default();
     let app = MyEguiApp::with_db(db, table_data, pending_recovery, idle_rx);
 
-    eframe::run_native("Crono", native_options, Box::new(move |_cc| Ok(Box::new(app))))
+    eframe::run_native("Bambana Seto!", native_options, Box::new(move |_cc| Ok(Box::new(app))))
 }
 
 
@@ -113,7 +113,7 @@ impl MyEguiApp {
 
         let pool = self.db.clone();
         tokio::spawn(async move {
-            if let Err(err) = dbmanager::insert_session(&pool, &description, &start_time).await {
+            if let Err(err) = dbManager::insert_session(&pool, &description, &start_time).await {
                 log::error!("Failed to insert session: {err}");
             }
         });
@@ -122,7 +122,7 @@ impl MyEguiApp {
     fn close_current_db_session_at(&self, end_time: String) {
         let pool = self.db.clone();
         tokio::spawn(async move {
-            if let Err(err) = dbmanager::update_last_open_session_end(&pool, &end_time).await {
+            if let Err(err) = dbManager::update_last_open_session_end(&pool, &end_time).await {
                 log::error!("Failed to update session end: {err}");
             }
         });

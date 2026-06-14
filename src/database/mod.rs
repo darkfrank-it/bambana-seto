@@ -1,1 +1,1 @@
-pub mod dbmanager;
+pub mod db_manager;
