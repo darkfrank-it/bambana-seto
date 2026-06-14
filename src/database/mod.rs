@@ -1,1 +1,1 @@
-pub mod thot;
+pub mod dbmanager;

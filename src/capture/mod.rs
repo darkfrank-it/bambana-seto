@@ -1,1 +1,1 @@
-pub mod panoptes;
+pub mod idlesentinel;
