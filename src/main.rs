@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use eframe::egui::{self, CentralPanel, Ui};
 use std::time::{Duration, Instant};
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
 use sqlx::SqlitePool;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
+use crono::capture::idlesentinel;
 use crono::database::dbmanager::{self as dbmanager, StoredSession};
 
 
@@ -25,8 +27,11 @@ async fn main() -> eframe::Result {
         .unwrap_or(None);
 
     let table_data = sessions_to_table_data(&sessions);
+    let (idle_tx, idle_rx) = unbounded_channel();
+    idlesentinel::start_idle_watcher(idle_tx);
+
     let native_options = eframe::NativeOptions::default();
-    let app = MyEguiApp::with_db(db, table_data, pending_recovery);
+    let app = MyEguiApp::with_db(db, table_data, pending_recovery, idle_rx);
 
     eframe::run_native("Crono", native_options, Box::new(move |_cc| Ok(Box::new(app))))
 }
@@ -38,30 +43,45 @@ struct MyEguiApp {
     is_playing: bool,
     start_time: Option<Instant>,
     elapsed: Duration,
+    elapsed_offset: Duration,
+    current_session_start_time: Option<String>,
     db: SqlitePool,
     table_data: HashMap<String, HashMap<String, Vec<Duration>>>, // data -> descrizione -> [tempi]
     pending_session_recovery: Option<StoredSession>,
+    pending_afk_duration: Option<Duration>,
     show_recovery_dialog: bool,
+    idle_return_rx: UnboundedReceiver<Duration>,
 }
 
 impl Default for MyEguiApp {
     fn default() -> Self {
+        let (_idle_tx, idle_rx) = unbounded_channel();
+
         Self {
             input_text: String::new(),
             current_description: String::new(),
             is_playing: false,
             start_time: None,
             elapsed: Duration::ZERO,
+            elapsed_offset: Duration::ZERO,
+            current_session_start_time: None,
             db: SqlitePool::connect_lazy("sqlite::memory:").expect("dummy pool"),
             table_data: HashMap::new(),
             pending_session_recovery: None,
+            pending_afk_duration: None,
             show_recovery_dialog: false,
+            idle_return_rx: idle_rx,
         }
     }
 }
 
 impl MyEguiApp {
-    fn with_db(db: SqlitePool, table_data: HashMap<String, HashMap<String, Vec<Duration>>>, pending_recovery: Option<StoredSession>) -> Self {
+    fn with_db(
+        db: SqlitePool,
+        table_data: HashMap<String, HashMap<String, Vec<Duration>>>,
+        pending_recovery: Option<StoredSession>,
+        idle_return_rx: UnboundedReceiver<Duration>,
+    ) -> Self {
         let show_dialog = pending_recovery.is_some();
         Self {
             input_text: String::new(),
@@ -69,10 +89,69 @@ impl MyEguiApp {
             is_playing: false,
             start_time: None,
             elapsed: Duration::ZERO,
+            elapsed_offset: Duration::ZERO,
+            current_session_start_time: None,
             db,
             table_data,
             pending_session_recovery: pending_recovery,
+            pending_afk_duration: None,
             show_recovery_dialog: show_dialog,
+            idle_return_rx,
+        }
+    }
+
+    fn begin_session(&mut self, description: String) {
+        let start_time = Utc::now().to_rfc3339();
+
+        self.is_playing = true;
+        self.start_time = Some(Instant::now());
+        self.elapsed_offset = Duration::ZERO;
+        self.elapsed = Duration::ZERO;
+        self.current_description = description.clone();
+        self.current_session_start_time = Some(start_time.clone());
+        self.input_text = description.clone();
+
+        let pool = self.db.clone();
+        tokio::spawn(async move {
+            if let Err(err) = dbmanager::insert_session(&pool, &description, &start_time).await {
+                log::error!("Failed to insert session: {err}");
+            }
+        });
+    }
+
+    fn close_current_db_session_at(&self, end_time: String) {
+        let pool = self.db.clone();
+        tokio::spawn(async move {
+            if let Err(err) = dbmanager::update_last_open_session_end(&pool, &end_time).await {
+                log::error!("Failed to update session end: {err}");
+            }
+        });
+    }
+
+    fn stop_current_timer(&mut self) {
+        self.is_playing = false;
+        self.start_time = None;
+        self.elapsed_offset = Duration::ZERO;
+        self.current_session_start_time = None;
+        self.current_description.clear();
+        self.elapsed = Duration::ZERO;
+    }
+
+    fn prompt_afk_recovery(&mut self, offline_duration: Duration) {
+        if self.is_playing {
+            if let Some(start) = self.start_time {
+                self.elapsed = self.elapsed_offset + start.elapsed();
+            }
+            self.elapsed_offset = self.elapsed;
+            self.is_playing = false;
+            self.pending_afk_duration = Some(offline_duration);
+            self.pending_session_recovery = Some(StoredSession {
+                id: -1,
+                description: self.current_description.clone(),
+                start_time: self.current_session_start_time.clone().unwrap_or_else(|| Utc::now().to_rfc3339()),
+                end_time: None,
+            });
+            self.show_recovery_dialog = true;
         }
     }
 
@@ -80,23 +159,14 @@ impl MyEguiApp {
         ui.horizontal(|ui| {
             let text_response = ui.text_edit_singleline(&mut self.input_text);
             let button_text = if self.is_playing { "⏹" } else { "▶" };
-            
+
             // Controlla se è stato premuto Invio nel campo di testo
             let enter_pressed = text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            
+
             if ui.button(button_text).clicked() || enter_pressed {
                 if self.is_playing {
-                    // Stop
-                    self.is_playing = false;
-                    self.start_time = None;
-
                     let end_time = Utc::now().to_rfc3339();
-                    let pool = self.db.clone();
-                    tokio::spawn(async move {
-                        if let Err(err) = dbmanager::update_last_open_session_end(&pool, &end_time).await {
-                            log::error!("Failed to update session end: {err}");
-                        }
-                    });
+                    self.close_current_db_session_at(end_time);
 
                     let date = Local::now().format("%Y-%m-%d").to_string();
                     self.table_data
@@ -106,10 +176,8 @@ impl MyEguiApp {
                         .or_default()
                         .push(self.elapsed);
 
-                    self.elapsed = Duration::ZERO;
-                    self.current_description.clear();
+                    self.stop_current_timer();
                 } else {
-                    // Play
                     let description = self.input_text.trim();
                     let description = if description.is_empty() {
                         "(nessuna descrizione)".to_string()
@@ -117,17 +185,7 @@ impl MyEguiApp {
                         description.to_string()
                     };
 
-                    self.is_playing = true;
-                    self.start_time = Some(Instant::now());
-                    self.current_description = description.clone();
-
-                    let pool = self.db.clone();
-                    let start_time = Utc::now().to_rfc3339();
-                    tokio::spawn(async move {
-                        if let Err(err) = dbmanager::insert_session(&pool, &description, &start_time).await {
-                            log::error!("Failed to insert session: {err}");
-                        }
-                    });
+                    self.begin_session(description);
                 }
             }
             ui.label(format!("Tempo: {}", format_duration(self.elapsed)));
@@ -145,18 +203,9 @@ impl MyEguiApp {
                 for (desc, durations) in tasks {
                     ui.horizontal(|ui| {
                         if ui.button("▶").clicked() {
-                            // Stop sessione corrente se in corso
                             if self.is_playing {
-                                self.is_playing = false;
-                                self.start_time = None;
-                                
                                 let end_time = Utc::now().to_rfc3339();
-                                let pool = self.db.clone();
-                                tokio::spawn(async move {
-                                    if let Err(err) = dbmanager::update_last_open_session_end(&pool, &end_time).await {
-                                        log::error!("Failed to update session end: {err}");
-                                    }
-                                });
+                                self.close_current_db_session_at(end_time);
 
                                 let date_str = Local::now().format("%Y-%m-%d").to_string();
                                 self.table_data
@@ -166,24 +215,11 @@ impl MyEguiApp {
                                     .or_default()
                                     .push(self.elapsed);
 
-                                self.elapsed = Duration::ZERO;
-                                self.current_description.clear();
+                                self.stop_current_timer();
                             }
-                            
-                            // Avvia nuova sessione con la descrizione cliccata
-                            self.input_text = desc.clone();
-                            self.is_playing = true;
-                            self.start_time = Some(Instant::now());
-                            self.current_description = desc.clone();
 
-                            let pool = self.db.clone();
-                            let start_time = Utc::now().to_rfc3339();
-                            let desc_clone = desc.clone();
-                            tokio::spawn(async move {
-                                if let Err(err) = dbmanager::insert_session(&pool, &desc_clone, &start_time).await {
-                                    log::error!("Failed to insert session: {err}");
-                                }
-                            });
+                            self.input_text = desc.clone();
+                            self.begin_session(desc.clone());
                         }
                         ui.label(desc);
                         ui.label(format!("Totale: {}", format_duration(calculate_total_duration(durations))));
@@ -208,77 +244,102 @@ impl MyEguiApp {
             .open(&mut is_open)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                if let Some(session) = &self.pending_session_recovery {
+                if let Some(session) = self.pending_session_recovery.clone() {
                     ui.heading("È stata trovata una sessione interrotta!");
                     ui.label(format!("Descrizione: {}", session.description));
                     ui.label(format!("Avviata: {}", session.start_time));
-                    
+                    if let Some(afk_duration) = self.pending_afk_duration {
+                        ui.label(format!("Tempo AFK: {}", format_duration(afk_duration)));
+                    }
+
                     ui.separator();
                     ui.label("Cosa desideri fare?");
                     ui.separator();
 
                     if ui.button("💾 Scarta tempo offline e continua").clicked() {
-                        // Option 1: Discard offline time and continue
-                        self.input_text = session.description.clone();
-                        self.current_description = session.description.clone();
-                        self.is_playing = true;
-                        self.start_time = Some(Instant::now());
-                        self.elapsed = Duration::ZERO;
+                        if let Some(afk_duration) = self.pending_afk_duration {
+                            let idle_end = Utc::now();
+                            let idle_start = idle_end
+                                - ChronoDuration::from_std(afk_duration).unwrap_or_else(|_| ChronoDuration::zero());
+                            self.close_current_db_session_at(idle_start.to_rfc3339());
+
+                            self.begin_session(session.description.clone());
+                        } else {
+                            self.input_text = session.description.clone();
+                            self.current_description = session.description.clone();
+                            self.is_playing = true;
+                            self.start_time = Some(Instant::now());
+                            self.elapsed_offset = Duration::ZERO;
+                            self.elapsed = Duration::ZERO;
+                        }
+
                         self.show_recovery_dialog = false;
+                        self.pending_afk_duration = None;
+                        self.pending_session_recovery = None;
                     }
 
                     if ui.button("🔄 Scarta offline e nuova sessione").clicked() {
-                        // Option 2: Close old session and start fresh
-                        let pool = self.db.clone();
-                        let session_id = session.id;
                         let end_time = Utc::now().to_rfc3339();
-                        tokio::spawn(async move {
-                            if let Err(err) = dbmanager::update_session_end_by_id(&pool, session_id, &end_time).await {
-                                log::error!("Failed to close session: {err}");
-                            }
-                        });
-                        
+                        self.close_current_db_session_at(end_time);
+
                         self.input_text.clear();
                         self.current_description.clear();
                         self.is_playing = false;
                         self.start_time = None;
+                        self.elapsed_offset = Duration::ZERO;
                         self.elapsed = Duration::ZERO;
+                        self.current_session_start_time = None;
+                        self.pending_afk_duration = None;
+                        self.pending_session_recovery = None;
                         self.show_recovery_dialog = false;
                     }
 
                     if ui.button("⏱️ Includi tempo offline e continua").clicked() {
-                        // Option 3: Include offline time and continue
-                        if let Ok(start) = DateTime::parse_from_rfc3339(&session.start_time) {
-                            let now = Utc::now();
-                            let offline_duration = now.signed_duration_since(start.with_timezone(&Utc)).to_std().unwrap_or(Duration::ZERO);
-                            
+                        if let Some(afk_duration) = self.pending_afk_duration {
                             self.input_text = session.description.clone();
                             self.current_description = session.description.clone();
                             self.is_playing = true;
-                            self.elapsed = offline_duration;
                             self.start_time = Some(Instant::now());
-                            self.show_recovery_dialog = false;
+                            self.elapsed_offset = self.elapsed + afk_duration;
+                            self.elapsed = self.elapsed_offset;
+                        } else if let Ok(start) = DateTime::parse_from_rfc3339(&session.start_time) {
+                            let now = Utc::now();
+                            let offline_duration = now
+                                .signed_duration_since(start.with_timezone(&Utc))
+                                .to_std()
+                                .unwrap_or(Duration::ZERO);
+                            self.input_text = session.description.clone();
+                            self.current_description = session.description.clone();
+                            self.is_playing = true;
+                            self.start_time = Some(Instant::now());
+                            self.elapsed_offset = offline_duration;
+                            self.elapsed = offline_duration;
                         }
+
+                        self.pending_afk_duration = None;
+                        self.pending_session_recovery = None;
+                        self.show_recovery_dialog = false;
                     }
                 }
             });
-        
-        self.show_recovery_dialog = is_open;
     }
 }
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Aggiorna il tempo se il timer è attivo
         if self.is_playing {
             if let Some(start) = self.start_time {
-                self.elapsed = start.elapsed();
-                // ctx.request_repaint(); // forza il repaint continuo
-                ctx.request_repaint_after(std::time::Duration::from_millis(1000)); // provare con un intervallo più lungo per ridurre il carico CPU
+                self.elapsed = self.elapsed_offset + start.elapsed();
+                ctx.request_repaint_after(std::time::Duration::from_millis(1000));
             }
         }
 
-        // Mostra il popup di recovery se necessario
+        while let Ok(offline_duration) = self.idle_return_rx.try_recv() {
+            if self.is_playing && !self.show_recovery_dialog {
+                self.prompt_afk_recovery(offline_duration);
+            }
+        }
+
         if self.show_recovery_dialog {
             self.show_recovery_popup(ctx);
         }
