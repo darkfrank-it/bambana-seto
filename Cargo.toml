@@ -22,7 +22,9 @@ eframe = { version = "0.33.0", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
     "x11",           # To support older Linux distributions (restores one of the default features)
 ] }
+image = "0.25"
 log = "0.4.27"
+# tray-icon = "0.14"
 
 [dependencies.windows]
 version = "0.61.3"
