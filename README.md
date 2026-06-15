@@ -1,8 +1,11 @@
 # 🍝 Bambana Seto!
 
-*"Perdi tempo, sai!" — A tiny time tracker that doesn’t waste your time.*
+*"Perdi tempo, sai!" ("You're wasting your time, you know!") — A tiny time tracker that doesn’t waste your time.*
 
 **Bambana Seto!** is a lightweight, no-nonsense desktop time tracking app written in Rust.  
+
+Developed with the help of **GitHub Copilot** and **artificial intelligence** to accelerate deployment while maintaining clarity and simplicity.
+
 It’s built for people who want to track what they do — without dealing with bloated tools, accounts, or browsers.
 
 ***
@@ -30,7 +33,7 @@ No distractions. No unnecessary buttons.
 
 ### ⚡ Native Performance
 
-Built in Rust without Electron.  
+Built in Rust with **egui/eframe**.  
 Consumes minimal RAM and CPU.
 
 ### 💾 Data in Your Hands
