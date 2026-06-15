@@ -19,7 +19,7 @@ pub fn get_last_input() -> Duration {
     Duration::from_millis(diff.into())
 }
 
-const IDLE_CHECK_SECS: u64 = 10;
+const IDLE_CHECK_SECS: u64 = 2;
 const IDLE_PERIOD_SECS: u64 = 600;
 
 pub fn start_idle_watcher(

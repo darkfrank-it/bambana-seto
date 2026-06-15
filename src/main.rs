@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use tokio::sync::mpsc::unbounded_channel;
 
 use eframe::egui;
@@ -5,8 +7,6 @@ use eframe::egui;
 use bambana_seto::capture::idle_sentinel as idleSentinel;
 use bambana_seto::database::db_manager as dbManager;
 use bambana_seto::ui::app::{MyEguiApp, sessions_to_table_data};
-
-
 
 // entry point
 #[tokio::main]
@@ -27,7 +27,7 @@ async fn main() -> eframe::Result {
     let table_data = sessions_to_table_data(&sessions);
     let (idle_tx, idle_rx) = unbounded_channel();
     idleSentinel::start_idle_watcher(idle_tx);
- 
+
     let icon_data = load_icon();
 
     let native_options = eframe::NativeOptions {

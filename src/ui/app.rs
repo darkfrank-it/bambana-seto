@@ -10,6 +10,7 @@ use crate::database::db_manager::{self as dbManager, StoredSession};
 pub struct MyEguiApp {
     input_text: String,
     current_description: String,
+    current_window_title: String,
     is_playing: bool,
     start_time: Option<Instant>,
     elapsed: Duration,
@@ -30,6 +31,7 @@ impl Default for MyEguiApp {
         Self {
             input_text: String::new(),
             current_description: String::new(),
+            current_window_title: "Bambana, seto!".to_owned(),
             is_playing: false,
             start_time: None,
             elapsed: Duration::ZERO,
@@ -56,6 +58,7 @@ impl MyEguiApp {
         Self {
             input_text: String::new(),
             current_description: String::new(),
+            current_window_title: "Bambana, seto!".to_owned(),
             is_playing: false,
             start_time: None,
             elapsed: Duration::ZERO,
@@ -105,6 +108,19 @@ impl MyEguiApp {
         self.current_session_start_time = None;
         self.current_description.clear();
         self.elapsed = Duration::ZERO;
+    }
+
+    fn update_window_title(&mut self, ctx: &egui::Context) {
+        let desired_title = if self.is_playing && !self.current_description.is_empty() {
+            self.current_description.clone()
+        } else {
+            "Bambana, seto!".to_owned()
+        };
+
+        if desired_title != self.current_window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(desired_title.clone()));
+            self.current_window_title = desired_title;
+        }
     }
 
     fn prompt_afk_recovery(&mut self, offline_duration: Duration) {
@@ -263,7 +279,7 @@ impl MyEguiApp {
                         self.show_recovery_dialog = false;
                     }
 
-                    if ui.button("⏱️ Includi tempo offline e continua").clicked() {
+                    if ui.button("🕒 Includi tempo offline e continua").clicked() {
                         if let Some(afk_duration) = self.pending_afk_duration {
                             self.input_text = session.description.clone();
                             self.current_description = session.description.clone();
@@ -312,6 +328,8 @@ impl eframe::App for MyEguiApp {
         if self.show_recovery_dialog {
             self.show_recovery_popup(ctx);
         }
+
+        self.update_window_title(ctx);
 
         CentralPanel::default().show(ctx, |ui| {
             self.top_controls(ui);

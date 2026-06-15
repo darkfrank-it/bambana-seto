@@ -5,7 +5,11 @@ authors = ["Nicola Danese <nicola.danese@e-projectsrl.it>"]
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 # https://github.com/emilk/eframe_template/blob/main/Cargo.toml
+
+[build-dependencies]
+embed-resource = "3.0.9"
 
 [dependencies]
 tokio = { version = "1.47.1", features = ["rt", "time", "macros", "rt-multi-thread", "signal"] }
