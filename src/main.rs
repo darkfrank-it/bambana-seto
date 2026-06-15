@@ -33,7 +33,7 @@ async fn main() -> eframe::Result {
     let native_options = eframe::NativeOptions::default();
     let app = MyEguiApp::with_db(db, table_data, pending_recovery, idle_rx);
 
-    eframe::run_native("Bambana Seto!", native_options, Box::new(move |_cc| Ok(Box::new(app))))
+    eframe::run_native("Bambana, Seto!", native_options, Box::new(move |_cc| Ok(Box::new(app))))
 }
 
 
