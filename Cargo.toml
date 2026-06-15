@@ -1,6 +1,6 @@
 [package]
 name = "bambana-seto"
-description = "Tieni traccia di cosa stai facendo per report fogli presenza"
+description = "A tiny time tracker that doesn’t waste your time."
 authors = ["Nicola Danese <nicola.danese@e-projectsrl.it>"]
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
 version = "0.1.0"
@@ -24,7 +24,7 @@ eframe = { version = "0.33.0", default-features = false, features = [
 ] }
 image = "0.25"
 log = "0.4.27"
-# tray-icon = "0.14"
+# tray-icon = "0.14"   # To support Windows tray icon
 
 [dependencies.windows]
 version = "0.61.3"
