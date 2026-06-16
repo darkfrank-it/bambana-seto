@@ -93,6 +93,29 @@ pub async fn update_last_open_session_end(
     Ok(result.rows_affected() > 0)
 }
 
+pub async fn update_last_open_session_description_and_end(
+    pool: &SqlitePool,
+    description: &str,
+    end_time: &str,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        r#"UPDATE sessions
+           SET description = ?, end_time = ?
+           WHERE id = (
+               SELECT id FROM sessions
+               WHERE end_time IS NULL
+               ORDER BY start_time DESC
+               LIMIT 1
+           )"#,
+    )
+    .bind(description)
+    .bind(end_time)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn load_recent_sessions(pool: &SqlitePool) -> sqlx::Result<Vec<StoredSession>> {
     let sessions = sqlx::query_as::<_, StoredSession>(
         r#"SELECT id, description, start_time, end_time

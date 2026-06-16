@@ -92,10 +92,16 @@ impl MyEguiApp {
         });
     }
 
-    fn close_current_db_session_at(&self, end_time: String) {
+    fn close_current_db_session_at(&self, description: Option<String>, end_time: String) {
         let pool = self.db.clone();
         tokio::spawn(async move {
-            if let Err(err) = dbManager::update_last_open_session_end(&pool, &end_time).await {
+            let result = if let Some(description) = description.as_deref() {
+                dbManager::update_last_open_session_description_and_end(&pool, description, &end_time).await
+            } else {
+                dbManager::update_last_open_session_end(&pool, &end_time).await
+            };
+
+            if let Err(err) = result {
                 log::error!("Failed to update session end: {err}");
             }
         });
@@ -151,13 +157,20 @@ impl MyEguiApp {
             if ui.button(button_text).clicked() || enter_pressed {
                 if self.is_playing {
                     let end_time = Utc::now().to_rfc3339();
-                    self.close_current_db_session_at(end_time);
+                    let description = self.input_text.trim();
+                    let session_description = if description.is_empty() {
+                        "(nessuna descrizione)".to_string()
+                    } else {
+                        description.to_string()
+                    };
+
+                    self.close_current_db_session_at(Some(session_description.clone()), end_time);
 
                     let date = Local::now().format("%Y-%m-%d").to_string();
                     self.table_data
                         .entry(date)
                         .or_default()
-                        .entry(self.current_description.clone())
+                        .entry(session_description.clone())
                         .or_default()
                         .push(self.elapsed);
 
@@ -190,7 +203,7 @@ impl MyEguiApp {
                         if ui.button("▶").clicked() {
                             if self.is_playing {
                                 let end_time = Utc::now().to_rfc3339();
-                                self.close_current_db_session_at(end_time);
+                                self.close_current_db_session_at(None, end_time);
 
                                 let date_str = Local::now().format("%Y-%m-%d").to_string();
                                 self.table_data
@@ -246,7 +259,7 @@ impl MyEguiApp {
                             let idle_end = Utc::now();
                             let idle_start = idle_end
                                 - ChronoDuration::from_std(afk_duration).unwrap_or_else(|_| ChronoDuration::zero());
-                            self.close_current_db_session_at(idle_start.to_rfc3339());
+                            self.close_current_db_session_at(None, idle_start.to_rfc3339());
 
                             self.begin_session(session.description.clone());
                         } else {
@@ -265,7 +278,7 @@ impl MyEguiApp {
 
                     if ui.button("🔄 Scarta offline e nuova sessione").clicked() {
                         let end_time = Utc::now().to_rfc3339();
-                        self.close_current_db_session_at(end_time);
+                        self.close_current_db_session_at(None, end_time);
 
                         self.input_text.clear();
                         self.current_description.clear();
