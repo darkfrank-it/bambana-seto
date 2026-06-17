@@ -275,16 +275,22 @@ impl MyEguiApp {
     }
 
     fn show_table(&mut self, ui: &mut Ui) {
-        for (date, tasks) in &self.table_data.clone() {
+        let entries: Vec<(String, HashMap<String, Vec<Duration>>)> = self
+            .table_data
+            .iter()
+            .rev()
+            .map(|(date, tasks)| (date.clone(), tasks.clone()))
+            .collect();
+        for (date, tasks) in entries {
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     ui.label(format!("Data: {}", date));
-                    let mut total_time = calculate_total_time(tasks);
+                    let mut total_time = calculate_total_time(&tasks);
                     
                     // Add active session time if it's for today
                     if self.is_playing {
                         let today = Local::now().format("%Y-%m-%d").to_string();
-                        if date == &today {
+                        if date == today {
                             let base_total: Duration = tasks.values()
                                 .map(|durations| calculate_total_duration(durations))
                                 .sum();
@@ -316,12 +322,12 @@ impl MyEguiApp {
                             self.begin_session(desc.clone());
                         }
                         ui.label(desc);
-                        ui.label(format!("Totale: {}", format_duration(calculate_total_duration(durations))));
+                        ui.label(format!("Totale: {}", format_duration(calculate_total_duration(&durations))));
                     });
                     for duration in durations {
                         ui.horizontal(|ui| {
                             ui.label("   sessione:");
-                            ui.label(format_duration(*duration));
+                            ui.label(format_duration(duration));
                         });
                     }
                 }
