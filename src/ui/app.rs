@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use eframe::egui::{self, CentralPanel, Ui};
+use egui::TextEdit;
 use std::time::{Duration, Instant};
 use chrono::{DateTime, Duration as ChronoDuration, Local, Utc, Timelike};
 use sqlx::SqlitePool;
@@ -17,10 +18,11 @@ pub struct MyEguiApp {
     elapsed_offset: Duration,
     current_session_start_time: Option<String>,
     db: SqlitePool,
-    table_data: HashMap<String, HashMap<String, Vec<Duration>>>,
+    table_data: BTreeMap<String, HashMap<String, Vec<Duration>>>,
     pending_session_recovery: Option<StoredSession>,
     pending_afk_duration: Option<Duration>,
     show_recovery_dialog: bool,
+    show_idle_dialog: bool,
     idle_return_rx: UnboundedReceiver<Duration>,
     // Time editing dialog state
     show_time_edit_dialog: bool,
@@ -43,10 +45,11 @@ impl Default for MyEguiApp {
             elapsed_offset: Duration::ZERO,
             current_session_start_time: None,
             db: SqlitePool::connect_lazy("sqlite::memory:").expect("dummy pool"),
-            table_data: HashMap::new(),
+            table_data: BTreeMap::new(),
             pending_session_recovery: None,
             pending_afk_duration: None,
             show_recovery_dialog: false,
+            show_idle_dialog: false,
             idle_return_rx: idle_rx,
             show_time_edit_dialog: false,
             edited_start_hour: 0,
@@ -59,7 +62,7 @@ impl Default for MyEguiApp {
 impl MyEguiApp {
     pub fn with_db(
         db: SqlitePool,
-        table_data: HashMap<String, HashMap<String, Vec<Duration>>>,
+        table_data: BTreeMap<String, HashMap<String, Vec<Duration>>>,
         pending_recovery: Option<StoredSession>,
         idle_return_rx: UnboundedReceiver<Duration>,
     ) -> Self {
@@ -78,6 +81,7 @@ impl MyEguiApp {
             pending_session_recovery: pending_recovery,
             pending_afk_duration: None,
             show_recovery_dialog: show_dialog,
+            show_idle_dialog: false,
             idle_return_rx,
             show_time_edit_dialog: false,
             edited_start_hour: 0,
@@ -212,13 +216,18 @@ impl MyEguiApp {
                 start_time: self.current_session_start_time.clone().unwrap_or_else(|| Utc::now().to_rfc3339()),
                 end_time: None,
             });
-            self.show_recovery_dialog = true;
+            self.show_idle_dialog = true;
         }
     }
 
     fn top_controls(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            let text_response = ui.text_edit_singleline(&mut self.input_text);
+           
+            let text_response = ui.add(
+                TextEdit::singleline(&mut self.input_text)
+                    .hint_text("A cosa stai lavorando?")
+            );
+
             let button_text = if self.is_playing { "⏹" } else { "▶" };
 
             let enter_pressed = text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -244,6 +253,7 @@ impl MyEguiApp {
                         .push(self.elapsed);
 
                     self.stop_current_timer();
+                    self.input_text = "".to_string();
                 } else {
                     let description = self.input_text.trim();
                     let description = if description.is_empty() {
@@ -269,7 +279,19 @@ impl MyEguiApp {
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     ui.label(format!("Data: {}", date));
-                    let total_time = calculate_total_time(tasks);
+                    let mut total_time = calculate_total_time(tasks);
+                    
+                    // Add active session time if it's for today
+                    if self.is_playing {
+                        let today = Local::now().format("%Y-%m-%d").to_string();
+                        if date == &today {
+                            let base_total: Duration = tasks.values()
+                                .map(|durations| calculate_total_duration(durations))
+                                .sum();
+                            total_time = format_duration(base_total + self.elapsed);
+                        }
+                    }
+                    
                     ui.label(format!("Totale: {}", total_time));
                 });
                 for (desc, durations) in tasks {
@@ -328,45 +350,7 @@ impl MyEguiApp {
                     ui.label("Cosa desideri fare?");
                     ui.separator();
 
-                    if ui.button("💾 Scarta tempo offline e continua").clicked() {
-                        if let Some(afk_duration) = self.pending_afk_duration {
-                            let idle_end = Utc::now();
-                            let idle_start = idle_end
-                                - ChronoDuration::from_std(afk_duration).unwrap_or_else(|_| ChronoDuration::zero());
-                            self.close_current_db_session_at(None, idle_start.to_rfc3339());
-
-                            self.begin_session(session.description.clone());
-                        } else {
-                            self.input_text = session.description.clone();
-                            self.current_description = session.description.clone();
-                            self.is_playing = true;
-                            self.start_time = Some(Instant::now());
-                            self.elapsed_offset = Duration::ZERO;
-                            self.elapsed = Duration::ZERO;
-                        }
-
-                        self.show_recovery_dialog = false;
-                        self.pending_afk_duration = None;
-                        self.pending_session_recovery = None;
-                    }
-
-                    if ui.button("🔄 Scarta offline e nuova sessione").clicked() {
-                        let end_time = Utc::now().to_rfc3339();
-                        self.close_current_db_session_at(None, end_time);
-
-                        self.input_text.clear();
-                        self.current_description.clear();
-                        self.is_playing = false;
-                        self.start_time = None;
-                        self.elapsed_offset = Duration::ZERO;
-                        self.elapsed = Duration::ZERO;
-                        self.current_session_start_time = None;
-                        self.pending_afk_duration = None;
-                        self.pending_session_recovery = None;
-                        self.show_recovery_dialog = false;
-                    }
-
-                    if ui.button("🕒 Includi tempo offline e continua").clicked() {
+                    if ui.button("Mantieni il tempo e continua").clicked() {
                         if let Some(afk_duration) = self.pending_afk_duration {
                             self.input_text = session.description.clone();
                             self.current_description = session.description.clone();
@@ -388,6 +372,132 @@ impl MyEguiApp {
                             self.elapsed = offline_duration;
                         }
 
+                        self.pending_afk_duration = None;
+                        self.pending_session_recovery = None;
+                        self.show_recovery_dialog = false;
+                    }
+
+		     if ui.button("Scarta tempo").clicked() {
+                        if let Some(afk_duration) = self.pending_afk_duration {
+                            let idle_end = Utc::now();
+                            let idle_start = idle_end
+                                - ChronoDuration::from_std(afk_duration).unwrap_or_else(|_| ChronoDuration::zero());
+                            self.close_current_db_session_at(None, idle_start.to_rfc3339());
+
+                            self.begin_session(session.description.clone());
+                        } else {
+                            self.input_text = session.description.clone();
+                            self.current_description = session.description.clone();
+                            self.is_playing = true;
+                            self.start_time = Some(Instant::now());
+                            self.elapsed_offset = Duration::ZERO;
+                            self.elapsed = Duration::ZERO;
+                        }
+
+                        self.show_recovery_dialog = false;
+                        self.pending_afk_duration = None;
+                        self.pending_session_recovery = None;
+                    }
+
+                    if ui.button("Scarta tempo e continua").clicked() {
+                        let end_time = Utc::now().to_rfc3339();
+                        self.close_current_db_session_at(None, end_time);
+
+                        self.input_text.clear();
+                        self.current_description.clear();
+                        self.is_playing = false;
+                        self.start_time = None;
+                        self.elapsed_offset = Duration::ZERO;
+                        self.elapsed = Duration::ZERO;
+                        self.current_session_start_time = None;
+                        self.pending_afk_duration = None;
+                        self.pending_session_recovery = None;
+                        self.show_recovery_dialog = false;
+                    }
+                }
+            });
+    }
+
+     fn show_idle_popup(&mut self, ctx: &egui::Context) {
+        let mut is_open = self.show_recovery_dialog;
+        egui::Window::new("Sessione Inattiva")
+            .resizable(false)
+            .collapsible(false)
+            .open(&mut is_open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                if let Some(session) = self.pending_session_recovery.clone() {
+                    ui.heading("Sei stato inattivo per un po' di tempo!");
+                    ui.label(format!("Descrizione: {}", session.description));
+                    ui.label(format!("Avviata: {}", session.start_time));
+                    if let Some(afk_duration) = self.pending_afk_duration {
+                        ui.label(format!("Tempo AFK: {}", format_duration(afk_duration)));
+                    }
+
+                    ui.separator();
+                    ui.label("Cosa desideri fare?");
+                    ui.separator();
+
+                    if ui.button("Mantieni il tempo e continua").clicked() {
+                        if let Some(afk_duration) = self.pending_afk_duration {
+                            self.input_text = session.description.clone();
+                            self.current_description = session.description.clone();
+                            self.is_playing = true;
+                            self.start_time = Some(Instant::now());
+                            self.elapsed_offset = self.elapsed + afk_duration;
+                            self.elapsed = self.elapsed_offset;
+                        } else if let Ok(start) = DateTime::parse_from_rfc3339(&session.start_time) {
+                            let now = Utc::now();
+                            let offline_duration = now
+                                .signed_duration_since(start.with_timezone(&Utc))
+                                .to_std()
+                                .unwrap_or(Duration::ZERO);
+                            self.input_text = session.description.clone();
+                            self.current_description = session.description.clone();
+                            self.is_playing = true;
+                            self.start_time = Some(Instant::now());
+                            self.elapsed_offset = offline_duration;
+                            self.elapsed = offline_duration;
+                        }
+
+                        self.pending_afk_duration = None;
+                        self.pending_session_recovery = None;
+                        self.show_recovery_dialog = false;
+                    }
+
+                    if ui.button("Scarta tempo").clicked() {
+                        if let Some(afk_duration) = self.pending_afk_duration {
+                            let idle_end = Utc::now();
+                            let idle_start = idle_end
+                                - ChronoDuration::from_std(afk_duration).unwrap_or_else(|_| ChronoDuration::zero());
+                            self.close_current_db_session_at(None, idle_start.to_rfc3339());
+
+                            self.begin_session(session.description.clone());
+                        } else {
+                            self.input_text = session.description.clone();
+                            self.current_description = session.description.clone();
+                            self.is_playing = true;
+                            self.start_time = Some(Instant::now());
+                            self.elapsed_offset = Duration::ZERO;
+                            self.elapsed = Duration::ZERO;
+                        }
+
+                        self.show_recovery_dialog = false;
+                        self.pending_afk_duration = None;
+                        self.pending_session_recovery = None;
+                    }
+
+                    if ui.button("Scarta tempo e continua").clicked() {
+                        let end_time = Utc::now().to_rfc3339();
+                        self.close_current_db_session_at(None, end_time);
+
+                        self.input_text.clear();
+                        self.current_description.clear();
+                        self.is_playing = false;
+                        self.start_time = None;
+                        self.elapsed_offset = Duration::ZERO;
+                        self.elapsed = Duration::ZERO;
+                        self.current_session_start_time = None;
                         self.pending_afk_duration = None;
                         self.pending_session_recovery = None;
                         self.show_recovery_dialog = false;
@@ -455,7 +565,7 @@ impl eframe::App for MyEguiApp {
         if self.is_playing {
             if let Some(start) = self.start_time {
                 self.elapsed = self.elapsed_offset + start.elapsed();
-                ctx.request_repaint_after(std::time::Duration::from_millis(1000));
+                ctx.request_repaint_after(std::time::Duration::from_secs(1));
             }
         }
 
@@ -467,6 +577,10 @@ impl eframe::App for MyEguiApp {
 
         if self.show_recovery_dialog {
             self.show_recovery_popup(ctx);
+        }
+
+        if self.show_idle_dialog {
+            self.show_idle_popup(ctx);
         }
 
         if self.show_time_edit_dialog {
@@ -502,8 +616,8 @@ fn calculate_total_time(tasks: &HashMap<String, Vec<Duration>>) -> String {
 
 pub fn sessions_to_table_data(
     sessions: &[StoredSession],
-) -> HashMap<String, HashMap<String, Vec<Duration>>> {
-    let mut table_data: HashMap<String, HashMap<String, Vec<Duration>>> = HashMap::new();
+) -> BTreeMap<String, HashMap<String, Vec<Duration>>> {
+    let mut table_data: BTreeMap<String, HashMap<String, Vec<Duration>>> = BTreeMap::new();
 
     for session in sessions {
         if let Some(duration) = session_duration(session) {
