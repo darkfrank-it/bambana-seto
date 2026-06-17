@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use eframe::egui::{self, CentralPanel, Ui};
 use std::time::{Duration, Instant};
-use chrono::{DateTime, Duration as ChronoDuration, Local, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Local, Utc, Timelike};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -22,6 +22,11 @@ pub struct MyEguiApp {
     pending_afk_duration: Option<Duration>,
     show_recovery_dialog: bool,
     idle_return_rx: UnboundedReceiver<Duration>,
+    // Time editing dialog state
+    show_time_edit_dialog: bool,
+    edited_start_hour: u32,
+    edited_start_minute: u32,
+    edit_error_message: Option<String>,
 }
 
 impl Default for MyEguiApp {
@@ -43,6 +48,10 @@ impl Default for MyEguiApp {
             pending_afk_duration: None,
             show_recovery_dialog: false,
             idle_return_rx: idle_rx,
+            show_time_edit_dialog: false,
+            edited_start_hour: 0,
+            edited_start_minute: 0,
+            edit_error_message: None,
         }
     }
 }
@@ -70,7 +79,67 @@ impl MyEguiApp {
             pending_afk_duration: None,
             show_recovery_dialog: show_dialog,
             idle_return_rx,
+            show_time_edit_dialog: false,
+            edited_start_hour: 0,
+            edited_start_minute: 0,
+            edit_error_message: None,
         }
+    }
+
+    fn open_time_edit_dialog(&mut self) {
+        // Pre-populate with current local time
+        let now = Local::now();
+        self.edited_start_hour = now.hour() as u32;
+        self.edited_start_minute = now.minute() as u32;
+        self.edit_error_message = None;
+        self.show_time_edit_dialog = true;
+    }
+
+    fn apply_new_start_time(&mut self) {
+        // Validate input
+        if self.edited_start_hour > 23 {
+            self.edit_error_message = Some("Ora deve essere tra 0 e 23".to_string());
+            return;
+        }
+        if self.edited_start_minute > 59 {
+            self.edit_error_message = Some("Minuti devono essere tra 0 e 59".to_string());
+            return;
+        }
+
+        // Calculate new start_time as today at the specified hour:minute in Local time
+        let now = Local::now();
+        let new_start_local = now
+            .date_naive()
+            .and_hms_opt(self.edited_start_hour as u32, self.edited_start_minute as u32, 0)
+            .expect("valid time");
+        
+        let new_start_utc = new_start_local
+            .and_local_timezone(Local)
+            .single()
+            .expect("valid timezone")
+            .with_timezone(&Utc);
+        
+        let new_start_time_str = new_start_utc.to_rfc3339();
+
+        // Update current session state
+        self.current_session_start_time = Some(new_start_time_str.clone());
+        
+        // Reset timer to recalculate elapsed from new start time
+        self.start_time = Some(Instant::now());
+        self.elapsed_offset = Duration::ZERO;
+        self.elapsed = Duration::ZERO;
+
+        // Update database asynchronously
+        let pool = self.db.clone();
+        tokio::spawn(async move {
+            if let Err(err) = dbManager::update_open_session_start_time(&pool, &new_start_time_str).await {
+                log::error!("Failed to update session start time: {err}");
+            }
+        });
+
+        // Close dialog
+        self.show_time_edit_dialog = false;
+        self.edit_error_message = None;
     }
 
     fn begin_session(&mut self, description: String) {
@@ -186,7 +255,12 @@ impl MyEguiApp {
                     self.begin_session(description);
                 }
             }
-            ui.label(format!("Tempo: {}", format_duration(self.elapsed)));
+            
+            // Time display - clickable only when timer is active
+            let time_label_response = ui.label(format!("Tempo: {}", format_duration(self.elapsed)));
+            if self.is_playing && time_label_response.clicked() {
+                self.open_time_edit_dialog();
+            }
         });
     }
 
@@ -321,6 +395,59 @@ impl MyEguiApp {
                 }
             });
     }
+
+    fn show_time_edit_popup(&mut self, ctx: &egui::Context) {
+        let mut is_open = self.show_time_edit_dialog;
+        egui::Window::new("Modifica Ora di Inizio")
+            .resizable(false)
+            .collapsible(false)
+            .open(&mut is_open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label("Inserisci l'ora e i minuti di inizio della sessione:");
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    ui.label("Ora:");
+                    let hour_str = self.edited_start_hour.to_string();
+                    let mut hour_input = hour_str.clone();
+                    if ui.text_edit_singleline(&mut hour_input).changed() {
+                        if let Ok(h) = hour_input.trim().parse::<u32>() {
+                            self.edited_start_hour = h;
+                        }
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Minuti:");
+                    let min_str = self.edited_start_minute.to_string();
+                    let mut min_input = min_str.clone();
+                    if ui.text_edit_singleline(&mut min_input).changed() {
+                        if let Ok(m) = min_input.trim().parse::<u32>() {
+                            self.edited_start_minute = m;
+                        }
+                    }
+                });
+
+                if let Some(error) = &self.edit_error_message {
+                    ui.colored_label(egui::Color32::RED, error);
+                }
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Annulla").clicked() {
+                        self.show_time_edit_dialog = false;
+                        self.edit_error_message = None;
+                    }
+
+                    if ui.button("💾 Salva").clicked() {
+                        self.apply_new_start_time();
+                    }
+                });
+            });
+
+        self.show_time_edit_dialog = is_open;
+    }
 }
 
 impl eframe::App for MyEguiApp {
@@ -340,6 +467,10 @@ impl eframe::App for MyEguiApp {
 
         if self.show_recovery_dialog {
             self.show_recovery_popup(ctx);
+        }
+
+        if self.show_time_edit_dialog {
+            self.show_time_edit_popup(ctx);
         }
 
         self.update_window_title(ctx);

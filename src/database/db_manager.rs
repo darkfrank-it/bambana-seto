@@ -174,3 +174,24 @@ pub async fn delete_session_by_id(
 
     Ok(result.rows_affected() > 0)
 }
+
+pub async fn update_open_session_start_time(
+    pool: &SqlitePool,
+    new_start_time: &str,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        r#"UPDATE sessions
+           SET start_time = ?
+           WHERE id = (
+               SELECT id FROM sessions
+               WHERE end_time IS NULL
+               ORDER BY start_time DESC
+               LIMIT 1
+           )"#,
+    )
+    .bind(new_start_time)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
