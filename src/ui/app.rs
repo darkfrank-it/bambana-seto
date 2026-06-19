@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+use chrono::{DateTime, Duration as ChronoDuration, Local, Timelike, Utc};
 use eframe::egui::{self, CentralPanel, Ui};
 use egui::TextEdit;
-use std::time::{Duration, Instant};
-use chrono::{DateTime, Duration as ChronoDuration, Local, Utc, Timelike};
 use sqlx::SqlitePool;
+use std::collections::{BTreeMap, HashMap};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::database::db_manager::{self as dbManager, StoredSession};
@@ -114,20 +114,24 @@ impl MyEguiApp {
         let now = Local::now();
         let new_start_local = now
             .date_naive()
-            .and_hms_opt(self.edited_start_hour as u32, self.edited_start_minute as u32, 0)
+            .and_hms_opt(
+                self.edited_start_hour as u32,
+                self.edited_start_minute as u32,
+                0,
+            )
             .expect("valid time");
-        
+
         let new_start_utc = new_start_local
             .and_local_timezone(Local)
             .single()
             .expect("valid timezone")
             .with_timezone(&Utc);
-        
+
         let new_start_time_str = new_start_utc.to_rfc3339();
 
         // Update current session state
         self.current_session_start_time = Some(new_start_time_str.clone());
-        
+
         // Reset timer to recalculate elapsed from new start time
         self.start_time = Some(Instant::now());
         self.elapsed_offset = Duration::ZERO;
@@ -136,7 +140,9 @@ impl MyEguiApp {
         // Update database asynchronously
         let pool = self.db.clone();
         tokio::spawn(async move {
-            if let Err(err) = dbManager::update_open_session_start_time(&pool, &new_start_time_str).await {
+            if let Err(err) =
+                dbManager::update_open_session_start_time(&pool, &new_start_time_str).await
+            {
                 log::error!("Failed to update session start time: {err}");
             }
         });
@@ -169,7 +175,12 @@ impl MyEguiApp {
         let pool = self.db.clone();
         tokio::spawn(async move {
             let result = if let Some(description) = description.as_deref() {
-                dbManager::update_last_open_session_description_and_end(&pool, description, &end_time).await
+                dbManager::update_last_open_session_description_and_end(
+                    &pool,
+                    description,
+                    &end_time,
+                )
+                .await
             } else {
                 dbManager::update_last_open_session_end(&pool, &end_time).await
             };
@@ -213,7 +224,10 @@ impl MyEguiApp {
             self.pending_session_recovery = Some(StoredSession {
                 id: -1,
                 description: self.current_description.clone(),
-                start_time: self.current_session_start_time.clone().unwrap_or_else(|| Utc::now().to_rfc3339()),
+                start_time: self
+                    .current_session_start_time
+                    .clone()
+                    .unwrap_or_else(|| Utc::now().to_rfc3339()),
                 end_time: None,
             });
             self.show_idle_dialog = true;
@@ -222,15 +236,14 @@ impl MyEguiApp {
 
     fn top_controls(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-           
             let text_response = ui.add(
-                TextEdit::singleline(&mut self.input_text)
-                    .hint_text("A cosa stai lavorando?")
+                TextEdit::singleline(&mut self.input_text).hint_text("A cosa stai lavorando?"),
             );
 
             let button_text = if self.is_playing { "⏹" } else { "▶" };
 
-            let enter_pressed = text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let enter_pressed =
+                text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
             if ui.button(button_text).clicked() || enter_pressed {
                 if self.is_playing {
@@ -265,7 +278,7 @@ impl MyEguiApp {
                     self.begin_session(description);
                 }
             }
-            
+
             // Time display - clickable only when timer is active
             let time_label_response = ui.label(format!("Tempo: {}", format_duration(self.elapsed)));
             if self.is_playing && time_label_response.clicked() {
@@ -282,57 +295,67 @@ impl MyEguiApp {
             .map(|(date, tasks)| (date.clone(), tasks.clone()))
             .collect();
         for (date, tasks) in entries {
-            ui.group(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label(format!("Data: {}", date));
-                    let mut total_time = calculate_total_time(&tasks);
-                    
-                    // Add active session time if it's for today
-                    if self.is_playing {
-                        let today = Local::now().format("%Y-%m-%d").to_string();
-                        if date == today {
-                            let base_total: Duration = tasks.values()
-                                .map(|durations| calculate_total_duration(durations))
-                                .sum();
-                            total_time = format_duration(base_total + self.elapsed);
-                        }
-                    }
-                    
-                    ui.label(format!("Totale: {}", total_time));
-                });
-                for (desc, durations) in tasks {
-                    ui.horizontal(|ui| {
-                        if ui.button("▶").clicked() {
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("Data: {}", date));
+                            let mut total_time = calculate_total_time(&tasks);
+
+                            // Add active session time if it's for today
                             if self.is_playing {
-                                let end_time = Utc::now().to_rfc3339();
-                                self.close_current_db_session_at(None, end_time);
-
-                                let date_str = Local::now().format("%Y-%m-%d").to_string();
-                                self.table_data
-                                    .entry(date_str)
-                                    .or_default()
-                                    .entry(self.current_description.clone())
-                                    .or_default()
-                                    .push(self.elapsed);
-
-                                self.stop_current_timer();
+                                let today = Local::now().format("%Y-%m-%d").to_string();
+                                if date == today {
+                                    let base_total: Duration = tasks
+                                        .values()
+                                        .map(|durations| calculate_total_duration(durations))
+                                        .sum();
+                                    total_time = format_duration(base_total + self.elapsed);
+                                }
                             }
 
-                            self.input_text = desc.clone();
-                            self.begin_session(desc.clone());
-                        }
-                        ui.label(desc);
-                        ui.label(format!("Totale: {}", format_duration(calculate_total_duration(&durations))));
-                    });
-                    for duration in durations {
-                        ui.horizontal(|ui| {
-                            ui.label("   sessione:");
-                            ui.label(format_duration(duration));
+                            ui.label(format!("Totale: {}", total_time));
                         });
-                    }
-                }
-            });
-            ui.separator();
+                        for (desc, durations) in tasks {
+                            ui.horizontal(|ui| {
+                                if ui.button("▶").clicked() {
+                                    if self.is_playing {
+                                        let end_time = Utc::now().to_rfc3339();
+                                        self.close_current_db_session_at(None, end_time);
+
+                                        let date_str = Local::now().format("%Y-%m-%d").to_string();
+                                        self.table_data
+                                            .entry(date_str)
+                                            .or_default()
+                                            .entry(self.current_description.clone())
+                                            .or_default()
+                                            .push(self.elapsed);
+
+                                        self.stop_current_timer();
+                                    }
+
+                                    self.input_text = desc.clone();
+                                    self.begin_session(desc.clone());
+                                }
+                                ui.label(desc);
+                                ui.label(format!(
+                                    "Totale: {}",
+                                    format_duration(calculate_total_duration(&durations))
+                                ));
+                            });
+                            for duration in durations {
+                                ui.horizontal(|ui| {
+                                    ui.label("   sessione:");
+                                    ui.label(format_duration(duration));
+                                });
+                            }
+                        }
+                    });
+                    ui.separator();
+                },
+            );
         }
     }
 
@@ -364,7 +387,8 @@ impl MyEguiApp {
                             self.start_time = Some(Instant::now());
                             self.elapsed_offset = self.elapsed + afk_duration;
                             self.elapsed = self.elapsed_offset;
-                        } else if let Ok(start) = DateTime::parse_from_rfc3339(&session.start_time) {
+                        } else if let Ok(start) = DateTime::parse_from_rfc3339(&session.start_time)
+                        {
                             let now = Utc::now();
                             let offline_duration = now
                                 .signed_duration_since(start.with_timezone(&Utc))
@@ -383,11 +407,12 @@ impl MyEguiApp {
                         self.show_recovery_dialog = false;
                     }
 
-		     if ui.button("Scarta tempo").clicked() {
+                    if ui.button("Scarta tempo").clicked() {
                         if let Some(afk_duration) = self.pending_afk_duration {
                             let idle_end = Utc::now();
                             let idle_start = idle_end
-                                - ChronoDuration::from_std(afk_duration).unwrap_or_else(|_| ChronoDuration::zero());
+                                - ChronoDuration::from_std(afk_duration)
+                                    .unwrap_or_else(|_| ChronoDuration::zero());
                             self.close_current_db_session_at(None, idle_start.to_rfc3339());
 
                             self.begin_session(session.description.clone());
@@ -424,7 +449,7 @@ impl MyEguiApp {
             });
     }
 
-     fn show_idle_popup(&mut self, ctx: &egui::Context) {
+    fn show_idle_popup(&mut self, ctx: &egui::Context) {
         let mut is_open = self.show_recovery_dialog;
         egui::Window::new("Sessione Inattiva")
             .resizable(false)
@@ -452,7 +477,8 @@ impl MyEguiApp {
                             self.start_time = Some(Instant::now());
                             self.elapsed_offset = self.elapsed + afk_duration;
                             self.elapsed = self.elapsed_offset;
-                        } else if let Ok(start) = DateTime::parse_from_rfc3339(&session.start_time) {
+                        } else if let Ok(start) = DateTime::parse_from_rfc3339(&session.start_time)
+                        {
                             let now = Utc::now();
                             let offline_duration = now
                                 .signed_duration_since(start.with_timezone(&Utc))
@@ -475,7 +501,8 @@ impl MyEguiApp {
                         if let Some(afk_duration) = self.pending_afk_duration {
                             let idle_end = Utc::now();
                             let idle_start = idle_end
-                                - ChronoDuration::from_std(afk_duration).unwrap_or_else(|_| ChronoDuration::zero());
+                                - ChronoDuration::from_std(afk_duration)
+                                    .unwrap_or_else(|_| ChronoDuration::zero());
                             self.close_current_db_session_at(None, idle_start.to_rfc3339());
 
                             self.begin_session(session.description.clone());
@@ -576,7 +603,7 @@ impl eframe::App for MyEguiApp {
         }
 
         while let Ok(offline_duration) = self.idle_return_rx.try_recv() {
-            if self.is_playing && !self.show_recovery_dialog {
+            if self.is_playing && !self.show_idle_dialog {
                 self.prompt_afk_recovery(offline_duration);
             }
         }
@@ -616,7 +643,10 @@ fn calculate_total_duration(durations: &[Duration]) -> Duration {
 }
 
 fn calculate_total_time(tasks: &HashMap<String, Vec<Duration>>) -> String {
-    let total: Duration = tasks.values().map(|durations| calculate_total_duration(durations)).sum();
+    let total: Duration = tasks
+        .values()
+        .map(|durations| calculate_total_duration(durations))
+        .sum();
     format_duration(total)
 }
 
