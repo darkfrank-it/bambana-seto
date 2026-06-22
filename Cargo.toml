@@ -12,26 +12,21 @@ build = "build.rs"
 embed-resource = "3.0.9"
 
 [dependencies]
-tokio = { version = "1.47.1", features = ["rt", "time", "macros", "rt-multi-thread", "signal"] }
-sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-native-tls", "macros"] }
-sysinfo = "0.37.0"
-winapi = { version = "0.3.9", features = ["winuser"] }
+tokio = { version = "1.47", features = ["rt", "time", "macros", "rt-multi-thread", "signal"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls", "macros"] }
+sysinfo = "0.37"
+winapi = { version = "0.3", features = ["winuser"] }
 chrono = "0.4"
-egui = "0.33.0"
-eframe = { version = "0.33.0", default-features = false, features = [
-    "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
-    "default_fonts", # Embed the default egui fonts.
-    "glow",          # Use the glow rendering backend. Alternative: "wgpu".
-    "persistence",   # Enable restoring app state when restarting the app.
-    "wayland",       # To support Linux (and CI)
-    "x11",           # To support older Linux distributions (restores one of the default features)
-] }
+egui = "0.33"
+eframe = "0.33"
 image = "0.25"
-log = "0.4.27"
+log = "0.4"
+# confy = "2.0"
+# rust-i18n = "4.1"
 # tray-icon = "0.14"   # To support Windows tray icon
 
 [dependencies.windows]
-version = "0.61.3"
+version = "0.61"
 features = [    
 #    "Win32_Foundation",
 #    "Win32_Security",

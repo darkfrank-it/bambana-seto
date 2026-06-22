@@ -6,7 +6,7 @@ use eframe::egui;
 
 use bambana_seto::capture::idle_sentinel as idleSentinel;
 use bambana_seto::database::db_manager as dbManager;
-use bambana_seto::ui::app::{MyEguiApp, sessions_to_table_data};
+use bambana_seto::ui::app::{MyEguiApp};
 
 // entry point
 #[tokio::main]
@@ -20,11 +20,7 @@ async fn main() -> eframe::Result {
         .await
         .unwrap_or_default();
 
-    let pending_recovery = dbManager::get_open_session(&db)
-        .await
-        .unwrap_or(None);
-
-    let table_data = sessions_to_table_data(&sessions);
+    // Start the idle watcher and get the receiver for idle durations
     let (idle_tx, idle_rx) = unbounded_channel();
     idleSentinel::start_idle_watcher(idle_tx);
 
@@ -36,7 +32,7 @@ async fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    let app = MyEguiApp::with_db(db, table_data, pending_recovery, idle_rx);
+    let app = MyEguiApp::with_db(db, &sessions, idle_rx);
 
     eframe::run_native("Bambana, seto!", native_options, Box::new(move |_cc| Ok(Box::new(app))))
 }

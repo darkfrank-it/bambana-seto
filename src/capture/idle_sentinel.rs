@@ -1,5 +1,5 @@
 use std::mem::size_of;
-use std::time::{Duration, Instant};
+use chrono::{DateTime, Duration, Utc};
 use tokio::task::JoinHandle;
 use tokio::time;
 
@@ -16,7 +16,7 @@ pub fn get_last_input() -> Duration {
     let p_last_input_info = &mut last_input_info as *mut LASTINPUTINFO;
     let _ = unsafe { GetLastInputInfo(p_last_input_info) };
     let diff = tick_count.saturating_sub(last_input_info.dwTime);
-    Duration::from_millis(diff.into())
+    Duration::milliseconds(diff as i64)
 }
 
 const IDLE_CHECK_SECS: u64 = 2;
@@ -26,23 +26,24 @@ pub fn start_idle_watcher(
     idle_return_tx: tokio::sync::mpsc::UnboundedSender<Duration>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(IDLE_CHECK_SECS));
+        let mut interval = time::interval(std::time::Duration::from_secs(IDLE_CHECK_SECS));
         let mut was_idle = false;
-        let mut idle_start: Option<Instant> = None;
+        let mut idle_start: Option<DateTime<Utc>> = None;
 
         loop {
             interval.tick().await;
-            let duration_secs = get_last_input().as_secs();
+            let duration_secs = get_last_input().num_seconds();
+            let idle_duration = Duration::seconds(duration_secs);
 
-            if duration_secs >= IDLE_PERIOD_SECS {
+            if idle_duration >= Duration::seconds(IDLE_PERIOD_SECS as i64) {
                 if !was_idle {
                     was_idle = true;
-                    idle_start = Some(Instant::now() - Duration::from_secs(duration_secs));
+                    idle_start = Some(Utc::now() - idle_duration);
                 }
             } else if was_idle {
                 let offline_duration = idle_start
-                    .map(|start| Instant::now().duration_since(start))
-                    .unwrap_or_else(|| Duration::from_secs(duration_secs));
+                    .map(|start| Utc::now() - start)
+                    .unwrap_or_else(|| Duration::seconds(duration_secs));
                 let _ = idle_return_tx.send(offline_duration);
                 was_idle = false;
                 idle_start = None;
