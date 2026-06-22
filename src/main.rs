@@ -1,5 +1,9 @@
-#![windows_subsystem = "windows"]
+// #![windows_subsystem = "windows"]
 
+use std::fs::File;
+
+use log::LevelFilter;
+use simplelog::{Config, WriteLogger};
 use tokio::sync::mpsc::unbounded_channel;
 
 use eframe::egui;
@@ -11,11 +15,18 @@ use bambana_seto::ui::app::{MyEguiApp};
 // entry point
 #[tokio::main]
 async fn main() -> eframe::Result {
+    
+    WriteLogger::init(
+        LevelFilter::Info,
+        Config::default(),
+        File::create(".data/bambana.log").unwrap(),
+    ).unwrap();
+    log::info!("Starting bambana_seto...");
+
     let database_url = "sqlite:.data/bambana.db";
     let db = dbManager::open_db(database_url)
         .await
         .map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
-
     let sessions = dbManager::load_recent_sessions(&db)
         .await
         .unwrap_or_default();
@@ -24,15 +35,16 @@ async fn main() -> eframe::Result {
     let (idle_tx, idle_rx) = unbounded_channel();
     idleSentinel::start_idle_watcher(idle_tx);
 
-    let icon_data = load_icon();
+    let (session_id_tx, session_id_rx) = unbounded_channel();
 
+    let icon_data = load_icon();
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_icon(icon_data),
         ..Default::default()
     };
 
-    let app = MyEguiApp::with_db(db, &sessions, idle_rx);
+    let app = MyEguiApp::with_db(db, &sessions, idle_rx, session_id_tx, session_id_rx);
 
     eframe::run_native("Bambana, seto!", native_options, Box::new(move |_cc| Ok(Box::new(app))))
 }

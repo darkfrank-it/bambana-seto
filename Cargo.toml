@@ -21,6 +21,7 @@ egui = "0.33"
 eframe = "0.33"
 image = "0.25"
 log = "0.4"
+simplelog = "0.12"
 # confy = "2.0"
 # rust-i18n = "4.1"
 # tray-icon = "0.14"   # To support Windows tray icon

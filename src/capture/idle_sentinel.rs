@@ -19,8 +19,8 @@ pub fn get_last_input() -> Duration {
     Duration::milliseconds(diff as i64)
 }
 
-const IDLE_CHECK_SECS: u64 = 2;
-const IDLE_PERIOD_SECS: u64 = 600;
+const IDLE_CHECK_SECS: u64 = 1;
+const IDLE_PERIOD_SECS: u64 = 10;
 
 pub fn start_idle_watcher(
     idle_return_tx: tokio::sync::mpsc::UnboundedSender<Duration>,

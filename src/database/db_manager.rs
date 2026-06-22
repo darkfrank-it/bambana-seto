@@ -1,5 +1,6 @@
 use chrono::Utc;
-use sqlx::{sqlite::SqlitePoolOptions, FromRow, SqlitePool, Error as SqlxError};
+use sqlx::{Error as SqlxError, FromRow, SqlitePool, sqlite::SqlitePoolOptions};
+use std::fs::OpenOptions;
 use std::path::Path;
 
 #[derive(Debug, Clone, FromRow)]
@@ -10,7 +11,7 @@ pub struct StoredSession {
     pub end_time: Option<i64>,
 }
 
-pub fn ensure_sqlite_dir(database_url: &str) -> Result<(), std::io::Error> {
+pub fn ensure_sqlite_dir_and_db(database_url: &str) -> Result<(), std::io::Error> {
     let path_str = database_url
         .strip_prefix("sqlite://")
         .or_else(|| database_url.strip_prefix("sqlite:"))
@@ -24,11 +25,16 @@ pub fn ensure_sqlite_dir(database_url: &str) -> Result<(), std::io::Error> {
         }
     }
 
+    // Aprire una connessione forza la creazione del DB
+    if !db_path.exists() {
+        OpenOptions::new().create(true).write(true).open(db_path)?;
+    }
+
     Ok(())
 }
 
 pub async fn open_db(database_url: &str) -> sqlx::Result<SqlitePool> {
-    ensure_sqlite_dir(database_url).map_err(SqlxError::Io)?;
+    ensure_sqlite_dir_and_db(database_url).map_err(SqlxError::Io)?;
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
@@ -93,33 +99,16 @@ pub async fn load_recent_sessions(pool: &SqlitePool) -> sqlx::Result<Vec<StoredS
     Ok(sessions)
 }
 
-// pub async fn get_open_session(pool: &SqlitePool) -> sqlx::Result<Option<StoredSession>> {
-//     let session = sqlx::query_as::<_, StoredSession>(
-//         r#"
-//         SELECT id, description, start_time, end_time
-//         FROM sessions
-//         WHERE end_time IS NULL
-//         LIMIT 1
-//         "#
-//     )
-//     .fetch_optional(pool)
-//     .await?;
-
-//     Ok(session)
-// }
-
 pub async fn insert_session(
     pool: &SqlitePool,
     description: &str,
     start_time: i64,
 ) -> sqlx::Result<i64> {
-    let result = sqlx::query(
-        "INSERT INTO sessions (description, start_time) VALUES (?, ?)"
-    )
-    .bind(description)
-    .bind(start_time)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("INSERT INTO sessions (description, start_time) VALUES (?, ?)")
+        .bind(description)
+        .bind(start_time)
+        .execute(pool)
+        .await?;
 
     Ok(result.last_insert_rowid())
 }
@@ -127,7 +116,8 @@ pub async fn insert_session(
 pub async fn update_open_session(
     pool: &SqlitePool,
     id: i64,
-    description: &str) -> sqlx::Result<bool> {
+    description: &str,
+) -> sqlx::Result<bool> {
     let result = sqlx::query(
         r#"UPDATE sessions
            SET description = ?
@@ -141,11 +131,7 @@ pub async fn update_open_session(
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn end_open_session(
-    pool: &SqlitePool,
-    id: i64,
-    end_time: i64,
-) -> sqlx::Result<bool> {
+pub async fn end_open_session(pool: &SqlitePool, id: i64, end_time: i64) -> sqlx::Result<bool> {
     let result = sqlx::query(
         r#"UPDATE sessions
            SET end_time = ?
@@ -177,16 +163,11 @@ pub async fn update_open_session_start_time(
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn delete_session(
-    pool: &SqlitePool,
-    session_id: i64,
-) -> sqlx::Result<bool> {
-    let result = sqlx::query(
-        r#"DELETE FROM sessions WHERE id = ?"#,
-    )
-    .bind(session_id)
-    .execute(pool)
-    .await?;
+pub async fn delete_session(pool: &SqlitePool, session_id: i64) -> sqlx::Result<bool> {
+    let result = sqlx::query(r#"DELETE FROM sessions WHERE id = ?"#)
+        .bind(session_id)
+        .execute(pool)
+        .await?;
 
     Ok(result.rows_affected() > 0)
 }

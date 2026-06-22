@@ -3,7 +3,7 @@ use eframe::egui::{self, CentralPanel, Ui};
 use egui::TextEdit;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, HashMap};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::database::db_manager::{self as dbManager, StoredSession};
 
@@ -20,6 +20,8 @@ pub struct MyEguiApp {
     is_playing: bool,
     start_time: Option<DateTime<Utc>>,
     elapsed: Duration,
+    session_id_tx: UnboundedSender<i64>,
+    session_id_rx: UnboundedReceiver<i64>,
 
     // Recovery dialog state
     show_recovery_dialog: bool,
@@ -51,6 +53,10 @@ impl eframe::App for MyEguiApp {
             if self.is_playing && !self.show_idle_dialog {
                 self.prompt_idle_recovery(offline_duration);
             }
+        }
+
+        while let Ok(id) = self.session_id_rx.try_recv() {
+            self.session_id = Some(id);
         }
 
         if self.show_recovery_dialog {
@@ -88,8 +94,9 @@ impl MyEguiApp {
         db: SqlitePool,
         sessions: &[StoredSession],
         idle_return_rx: UnboundedReceiver<Duration>,
+        session_id_tx: UnboundedSender<i64>,
+        session_id_rx: UnboundedReceiver<i64>,
     ) -> Self {
-        //let show_dialog = pending_recovery.is_some();
         Self {
             db,
             current_window_title: "Bambana, seto!".to_owned(),
@@ -105,6 +112,8 @@ impl MyEguiApp {
             show_idle_dialog: false,
             pending_idle_duration: None,
             idle_return_rx,
+            session_id_tx,
+            session_id_rx,
             show_time_edit_dialog: false,
             edited_start_hour: 0,
             edited_start_minute: 0,
@@ -159,7 +168,7 @@ impl MyEguiApp {
             let result = dbManager::delete_session(&pool, id).await;
 
             if let Err(err) = result {
-                log::error!("Failed to update session end: {err}");
+                log::error!("Failed to delete session: {err}");
             }
         });
     }
@@ -203,6 +212,15 @@ impl MyEguiApp {
         self.edited_start_minute = now.minute() as u32;
         self.edit_error_message = None;
         self.show_time_edit_dialog = true;
+    }
+
+    fn open_end_time_edit_dialog(&mut self) {
+        let now = Utc::now();
+        self.edited_end_date = now.format("%Y-%m-%d").to_string();
+        self.edited_end_hour = now.hour();
+        self.edited_end_minute = now.minute();
+        self.edit_error_message = None;
+        self.show_end_time_edit_dialog = true;
     }
 
     // Applies the new start time entered by the user
@@ -259,11 +277,14 @@ impl MyEguiApp {
             return;
         }
 
-        let s = self.edited_end_date.clone() + " " 
+        let s = self.edited_end_date.clone()
+            + " "
             + &format!("{:02}:{:02}", self.edited_end_hour, self.edited_end_minute);
 
+        log::info!("Editing end time to: {}", s);
+
         // Calculate new end_time
-       let naive = NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M").ok();
+        let naive = NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M").ok();
 
         let new_end_utc = naive.expect("Expect end date!").and_utc();
 
@@ -272,9 +293,7 @@ impl MyEguiApp {
         // Update database asynchronously
         let pool = self.db.clone();
         tokio::spawn(async move {
-            if let Err(err) =
-                dbManager::end_open_session(&pool, id, new_end_utc.timestamp())
-                    .await
+            if let Err(err) = dbManager::end_open_session(&pool, id, new_end_utc.timestamp()).await
             {
                 log::error!("Failed to update session end time: {err}");
             }
@@ -299,10 +318,18 @@ impl MyEguiApp {
         };
 
         let pool = self.db.clone();
+        let tx = self.session_id_tx.clone();
 
         tokio::spawn(async move {
-            if let Err(err) = dbManager::insert_session(&pool, &description, start_time).await {
-                log::error!("Failed to insert session: {err}");
+            match dbManager::insert_session(&pool, &description, start_time).await {
+                Ok(id) => {
+                    if let Err(err) = tx.send(id) {
+                        log::error!("Failed to send inserted session id: {err}");
+                    }
+                }
+                Err(err) => {
+                    log::error!("Failed to insert session: {err}");
+                }
             }
         });
     }
@@ -326,10 +353,14 @@ impl MyEguiApp {
             - self
                 .pending_idle_duration
                 .unwrap_or_else(|| Duration::zero());
-        self.close_current_db_session_at(
-            self.session_id.expect("Expect session open"),
-            session_end.timestamp(),
-        );
+        let id = match self.session_id {
+            Some(id) => id,
+            None => {
+                log::error!("Expect session open");
+                return;
+            }
+        };
+        self.close_current_db_session_at(id, session_end.timestamp());
 
         let date = Utc::now().format("%Y-%m-%d").to_string();
         self.table_data
@@ -421,41 +452,49 @@ impl MyEguiApp {
                 if let Some(session) = self.pending_session_recovery.clone() {
                     ui.heading("È stata trovata una sessione interrotta!");
                     ui.label(format!("Descrizione: {}", session.description));
-                    ui.label(format!("Avviata: {}", session.start_time));
 
+                    let start_time = Utc.timestamp_opt(session.start_time, 0).single();
+                    let date = start_time.unwrap().format("%Y-%m-%d %H:%M").to_string();
+                    ui.label(format!("Avviata: {}", date));
 
                     let afk_duration: Duration = Utc::now()
                         .signed_duration_since(Utc.timestamp_opt(session.start_time, 0).unwrap());
                     //let afk_duration
-                    ui.label(format!("Tempo totale sessione: {}", format_duration(afk_duration, DurationFormat::WithoutSeconds)));
-                    
+                    ui.label(format!(
+                        "Tempo totale sessione: {}",
+                        format_duration(afk_duration, DurationFormat::WithoutSeconds)
+                    ));
+
                     ui.separator();
                     ui.label("Cosa desideri fare?");
                     ui.separator();
 
                     if ui.button("Mantieni il tempo e continua").clicked() {
                         self.input_text = session.description.clone();
-                         
+
                         self.is_playing = true;
                         self.session_id = Some(session.id);
                         self.start_time = DateTime::<Utc>::from_timestamp(session.start_time, 0);
                         self.elapsed = self.start_time.unwrap().signed_duration_since(Utc::now());
-                        
+
                         self.pending_session_recovery = None;
                         self.show_recovery_dialog = false;
                     }
 
-                    if ui.button("Termina sessione inserendo il tempo di fine").clicked() {
-                        self.session_id = Some(session.id);
-                        self.show_time_edit_dialog = true;
-                        
+                    if ui
+                        .button("Termina sessione inserendo il tempo di fine")
+                        .clicked()
+                    {
                         self.pending_session_recovery = None;
                         self.show_recovery_dialog = false;
+
+                        self.session_id = Some(session.id);
+                        self.open_end_time_edit_dialog();
                     }
 
                     if ui.button("Scarta tempo").clicked() {
                         self.delete_db_session(session.id);
-                        
+
                         self.pending_session_recovery = None;
                         self.show_recovery_dialog = false;
                     }
@@ -531,17 +570,15 @@ impl MyEguiApp {
 
                 ui.horizontal(|ui| {
                     ui.label("Data (YYYY-MM-DD):");
-                    let date_str = Utc::now().format("%Y-%m-%d").to_string();
-                    let mut date_input = date_str.clone();
+                    let mut date_input = self.edited_end_date.clone();
                     if ui.text_edit_singleline(&mut date_input).changed() {
-                            self.edited_end_date = date_input.trim().to_string();
+                        self.edited_end_date = date_input.trim().to_string();
                     }
                 });
 
                 ui.horizontal(|ui| {
                     ui.label("Ora:");
-                    let hour_str = self.edited_end_hour.to_string();
-                    let mut hour_input = hour_str.clone();
+                    let mut hour_input = self.edited_end_hour.to_string();
                     if ui.text_edit_singleline(&mut hour_input).changed() {
                         if let Ok(h) = hour_input.trim().parse::<u32>() {
                             self.edited_end_hour = h;
@@ -551,8 +588,7 @@ impl MyEguiApp {
 
                 ui.horizontal(|ui| {
                     ui.label("Minuti:");
-                    let min_str = self.edited_end_minute.to_string();
-                    let mut min_input = min_str.clone();
+                    let mut min_input = self.edited_end_minute.to_string();
                     if ui.text_edit_singleline(&mut min_input).changed() {
                         if let Ok(m) = min_input.trim().parse::<u32>() {
                             self.edited_end_minute = m;
@@ -566,11 +602,6 @@ impl MyEguiApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Annulla").clicked() {
-                        self.show_end_time_edit_dialog = false;
-                        self.edit_error_message = None;
-                    }
-
                     if ui.button("💾 Salva").clicked() {
                         self.apply_new_end_time();
                     }
