@@ -51,7 +51,7 @@ impl eframe::App for MyEguiApp {
 
         while let Ok(offline_duration) = self.idle_return_rx.try_recv() {
             if self.is_playing && !self.show_idle_dialog {
-                self.prompt_idle_recovery(offline_duration);
+                self.prompt_idle_recovery(offline_duration, ctx);
             }
         }
 
@@ -128,6 +128,18 @@ impl MyEguiApp {
         self.table_data = table_data;
         self.pending_session_recovery = pending;
         self.show_recovery_dialog = self.pending_session_recovery.is_some();
+        if self.show_recovery_dialog {
+            log::info!(
+                "Pending session recovery found: {:?}",
+                self.pending_session_recovery
+            );
+            // richiama l'attenzione della finestra principale quando il popup è aperto
+            notify_rust::Notification::new()
+                .summary("Sessione Interrotta")
+                .body("È stata trovata una sessione interrotta!")
+                .show()
+                .unwrap();
+        }
         // Calcola il totale delle sessioni per ogni giorno
         self.calc_table_data_totals();
 
@@ -432,7 +444,16 @@ impl MyEguiApp {
         self.reset_timer_state();
     }
 
-    fn prompt_idle_recovery(&mut self, offline_duration: Duration) {
+    fn prompt_idle_recovery(&mut self, offline_duration: Duration, ctx: &egui::Context) {
+        // richiama l'attenzione della finestra principale quando il popup è aperto
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        notify_rust::Notification::new()
+            .summary("Sessione Inattiva")
+            .body("Sei stato inattivo per un po' di tempo!")
+            .show()
+            .unwrap();
+
         self.pending_idle_duration = Some(offline_duration);
         self.show_idle_dialog = true;
     }
@@ -483,7 +504,6 @@ impl MyEguiApp {
                 }
 
                 if ui.button("Scarta tempo e continua").clicked() {
-
                     let description = self.input_text.clone();
 
                     self.end_session();
