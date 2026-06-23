@@ -129,7 +129,7 @@ impl MyEguiApp {
         self.pending_session_recovery = pending;
         self.show_recovery_dialog = self.pending_session_recovery.is_some();
         // Calcola il totale delle sessioni per ogni giorno
-        self.table_data_totals();
+        self.calc_table_data_totals();
 
         self
     }
@@ -170,13 +170,22 @@ impl MyEguiApp {
     }
 
     // Calcola il totale del tempo per ogni giorno e lo memorizza in `table_data_totals`
-    fn table_data_totals(&mut self) {
+    fn calc_table_data_totals(&mut self) {
         for (date, desc_map) in self.table_data.iter() {
+            // totale per data
             let date_total = desc_map
                 .values()
                 .flatten()
                 .fold(Duration::zero(), |acc, d| acc + *d);
             self.table_data_totals.insert(date.clone(), date_total);
+
+            // totale per (date, desc)
+            for (desc, durations) in desc_map.iter() {
+                let total = durations.iter().fold(Duration::zero(), |acc, d| acc + *d);
+
+                let key = format!("{}_{}", date, desc);
+                self.table_data_totals.insert(key, total);
+            }
         }
     }
 
@@ -202,13 +211,11 @@ impl MyEguiApp {
 
     // Resets the state of the timer
     fn reset_timer_state(&mut self) {
-        
-            self.input_text = "".to_string();
-            self.session_id = None;
-            self.is_playing = false;
-            self.start_time = None;
-            self.elapsed = Duration::zero();
-            self.pending_idle_duration = None;
+        self.input_text = "".to_string();
+        self.session_id = None;
+        self.is_playing = false;
+        self.start_time = None;
+        self.elapsed = Duration::zero();
     }
 
     // Opens a dialog to edit the start time of the current session
@@ -329,7 +336,7 @@ impl MyEguiApp {
             .or_default()
             .push(self.elapsed);
         // Calcola il totale delle sessioni per ogni giorno
-        self.table_data_totals();
+        self.calc_table_data_totals();
 
         // reset timer
         self.reset_timer_state();
@@ -388,6 +395,10 @@ impl MyEguiApp {
             - self
                 .pending_idle_duration
                 .unwrap_or_else(|| Duration::zero());
+        log::info!(
+            "Ending session at: {}",
+            session_end.format("%Y-%m-%d %H:%M:%S")
+        );
         let id = match self.session_id {
             Some(id) => id,
             None => {
@@ -402,6 +413,12 @@ impl MyEguiApp {
             - self
                 .pending_idle_duration
                 .unwrap_or_else(|| Duration::zero());
+        log::info!(
+            "Adding session to table_data: date={}, desc={}, elapsed={}",
+            date,
+            self.input_text,
+            format_duration(elapsed, DurationFormat::WithSeconds)
+        );
         self.table_data
             .entry(date)
             .or_default()
@@ -409,7 +426,7 @@ impl MyEguiApp {
             .or_default()
             .push(elapsed);
         // Calcola il totale delle sessioni per ogni giorno
-        self.table_data_totals();
+        self.calc_table_data_totals();
 
         // reset timer
         self.reset_timer_state();
@@ -466,8 +483,12 @@ impl MyEguiApp {
                 }
 
                 if ui.button("Scarta tempo e continua").clicked() {
+
+                    let description = self.input_text.clone();
+
                     self.end_session();
 
+                    self.input_text = description;
                     // nuova sessione
                     self.begin_session();
 
@@ -725,10 +746,11 @@ impl MyEguiApp {
                                     self.input_text = desc.clone();
                                     self.begin_session();
                                 }
-                                ui.label(desc);
+                                ui.label(&desc);
+                                let key = format!("{}_{}", date, desc);
                                 let duration = self
                                     .table_data_totals
-                                    .get(&desc)
+                                    .get(&key)
                                     .cloned()
                                     .unwrap_or_else(|| Duration::zero());
                                 ui.label(format!(
