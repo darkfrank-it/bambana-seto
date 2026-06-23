@@ -1,11 +1,15 @@
 use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike, Utc};
 use eframe::egui::{self, CentralPanel, Ui};
 use egui::TextEdit;
+use rust_i18n::t;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, HashMap};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::database::db_manager::{self as dbManager, StoredSession};
+
+use rust_i18n::i18n;
+i18n!("locales");
 
 pub struct MyEguiApp {
     db: SqlitePool,
@@ -95,7 +99,7 @@ impl MyEguiApp {
     ) -> Self {
         Self {
             db,
-            current_window_title: "Bambana, seto!".to_owned(),
+            current_window_title: t!("window_title").to_string(),
             table_data: BTreeMap::new(),
             table_data_totals: HashMap::new(),
             pending_session_recovery: None,
@@ -135,8 +139,8 @@ impl MyEguiApp {
             );
             // richiama l'attenzione della finestra principale quando il popup è aperto
             notify_rust::Notification::new()
-                .summary("Sessione Interrotta")
-                .body("È stata trovata una sessione interrotta!")
+                .summary(&t!("recovery_title").to_string())
+                .body(&t!("recovery_body").to_string())
                 .show()
                 .unwrap();
         }
@@ -212,7 +216,7 @@ impl MyEguiApp {
         let desired_title = if self.is_playing && !self.input_text.is_empty() {
             self.input_text.clone()
         } else {
-            "Bambana, seto!".to_owned()
+           t!("window_title").to_string()
         };
 
         if desired_title != self.current_window_title {
@@ -253,11 +257,11 @@ impl MyEguiApp {
     fn apply_new_start_time(&mut self) {
         // Validate input
         if self.edited_start_hour > 23 {
-            self.edit_error_message = Some("Ora deve essere tra 0 e 23".to_string());
+            self.edit_error_message = Some(t!("invalid_hour").to_string());
             return;
         }
         if self.edited_start_minute > 59 {
-            self.edit_error_message = Some("Minuti devono essere tra 0 e 59".to_string());
+            self.edit_error_message = Some(t!("invalid_minute").to_string());
             return;
         }
 
@@ -304,11 +308,11 @@ impl MyEguiApp {
     fn apply_new_end_time(&mut self) {
         // Validate input
         if self.edited_end_hour > 23 {
-            self.edit_error_message = Some("Ora deve essere tra 0 e 23".to_string());
+            self.edit_error_message = Some(t!("invalid_hour").to_string());
             return;
         }
         if self.edited_end_minute > 59 {
-            self.edit_error_message = Some("Minuti devono essere tra 0 e 59".to_string());
+            self.edit_error_message = Some(t!("invalid_minute").to_string());
             return;
         }
 
@@ -366,7 +370,7 @@ impl MyEguiApp {
         let start_time = Utc::now().timestamp();
         let description = self.input_text.trim();
         let description = if description.is_empty() {
-            "(nessuna descrizione)".to_string()
+            t!("no_description").to_string()
         } else {
             description.to_string()
         };
@@ -391,7 +395,7 @@ impl MyEguiApp {
     fn update_session_description(&mut self) {
         let description = self.input_text.trim();
         let description = if description.is_empty() {
-            "(nessuna descrizione)".to_string()
+            t!("no_description").to_string()
         } else {
             description.to_string()
         };
@@ -449,8 +453,8 @@ impl MyEguiApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         notify_rust::Notification::new()
-            .summary("Sessione Inattiva")
-            .body("Sei stato inattivo per un po' di tempo!")
+            .summary(&t!("idle_session_title").to_string())
+            .body(&t!("idle_session_body").to_string())
             .show()
             .unwrap();
 
@@ -461,7 +465,7 @@ impl MyEguiApp {
     // IDLE POPUP
     fn show_idle_popup(&mut self, ctx: &egui::Context) {
         let mut is_open = self.show_idle_dialog;
-        egui::Window::new("Sessione Inattiva")
+        egui::Window::new(t!("idle_session_title").to_string())
             .resizable(false)
             .collapsible(false)
             .open(&mut is_open)
@@ -474,12 +478,13 @@ impl MyEguiApp {
                 let datetime: DateTime<Utc> = current.into();
                 let formatted = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
 
-                ui.heading("Sei stato inattivo per un po' di tempo!");
-                ui.label(format!("Descrizione: {}", self.input_text));
-                ui.label(format!("Avviata: {}", formatted));
+                ui.heading(t!("idle_session_title"));
+                ui.label(format!("{}: {}", t!("description_label"), self.input_text));
+                ui.label(format!("{}: {}", t!("started_label"), formatted));
 
                 ui.label(format!(
-                    "Tempo inattivo: {}",
+                    "{}: {}",
+                    t!("inactive_time_label"),
                     format_duration(
                         self.pending_idle_duration
                             .unwrap_or_else(|| Duration::zero()),
@@ -488,22 +493,22 @@ impl MyEguiApp {
                 ));
 
                 ui.separator();
-                ui.label("Cosa desideri fare?");
+                ui.label(t!("what_are_you_working_on"));
                 ui.separator();
 
-                if ui.button("Mantieni il tempo e continua").clicked() {
+                if ui.button(t!("keep_time_continue")).clicked() {
                     self.pending_idle_duration = None;
                     self.show_idle_dialog = false;
                 }
 
-                if ui.button("Scarta tempo").clicked() {
+                if ui.button(t!("discard_time")).clicked() {
                     self.end_session();
 
                     self.pending_idle_duration = None;
                     self.show_idle_dialog = false;
                 }
 
-                if ui.button("Scarta tempo e continua").clicked() {
+                if ui.button(t!("discard_time_continue")).clicked() {
                     let description = self.input_text.clone();
 
                     self.end_session();
@@ -521,33 +526,34 @@ impl MyEguiApp {
     // RECOVERY POPUP
     fn show_recovery_popup(&mut self, ctx: &egui::Context) {
         let mut is_open = self.show_recovery_dialog;
-        egui::Window::new("Sessione Interrotta")
+        egui::Window::new(&t!("recovery_title").to_string())
             .resizable(false)
             .collapsible(false)
             .open(&mut is_open)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 if let Some(session) = self.pending_session_recovery.clone() {
-                    ui.heading("È stata trovata una sessione interrotta!");
-                    ui.label(format!("Descrizione: {}", session.description));
+                    ui.heading(&t!("recovery_title").to_string());
+                    ui.label(format!("{}: {}", t!("description_label"), session.description));
 
                     let start_time = Utc.timestamp_opt(session.start_time, 0).single();
                     let date = start_time.unwrap().format("%Y-%m-%d %H:%M").to_string();
-                    ui.label(format!("Avviata: {}", date));
+                    ui.label(format!("{}: {}" ,t!("started_label"), date));
 
                     let afk_duration: Duration = Utc::now()
                         .signed_duration_since(Utc.timestamp_opt(session.start_time, 0).unwrap());
                     //let afk_duration
                     ui.label(format!(
-                        "Tempo totale sessione: {}",
+                        "{}: {}",
+                        t!("total_label"),
                         format_duration(afk_duration, DurationFormat::WithoutSeconds)
                     ));
 
                     ui.separator();
-                    ui.label("Cosa desideri fare?");
+                    ui.label(t!("what_are_you_working_on"));
                     ui.separator();
 
-                    if ui.button("Mantieni il tempo e continua").clicked() {
+                    if ui.button(t!("recovery_keep_continue")).clicked() {
                         self.input_text = session.description.clone();
 
                         self.is_playing = true;
@@ -560,7 +566,7 @@ impl MyEguiApp {
                     }
 
                     if ui
-                        .button("Termina sessione inserendo il tempo di fine")
+                        .button(t!("recovery_end_session"))
                         .clicked()
                     {
                         self.pending_session_recovery = None;
@@ -572,7 +578,7 @@ impl MyEguiApp {
                         self.open_end_time_edit_dialog();
                     }
 
-                    if ui.button("Scarta tempo").clicked() {
+                    if ui.button(t!("discard_time")).clicked() {
                         self.delete_db_session(session.id);
 
                         self.pending_session_recovery = None;
@@ -585,17 +591,17 @@ impl MyEguiApp {
     // START TIME EDIT POPUP
     fn show_start_time_edit_popup(&mut self, ctx: &egui::Context) {
         let mut is_open = self.show_start_time_edit_dialog;
-        egui::Window::new("Modifica Ora di Inizio")
+        egui::Window::new(t!("edit_start_time_title"))
             .resizable(false)
             .collapsible(false)
             .open(&mut is_open)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.label("Inserisci l'ora e i minuti di inizio della sessione:");
+                ui.label(t!("enter_start_time"));
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    ui.label("Ora:");
+                    ui.label(t!("hour"));
                     let mut hour_input = self.edited_start_hour.to_string();
                     if ui.text_edit_singleline(&mut hour_input).changed() {
                         if let Ok(h) = hour_input.trim().parse::<u32>() {
@@ -605,7 +611,7 @@ impl MyEguiApp {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Minuti:");
+                    ui.label(t!("minute"));
                     let mut min_input = self.edited_start_minute.to_string();
                     if ui.text_edit_singleline(&mut min_input).changed() {
                         if let Ok(m) = min_input.trim().parse::<u32>() {
@@ -620,12 +626,12 @@ impl MyEguiApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Annulla").clicked() {
+                    if ui.button(t!("cancel")).clicked() {
                         self.show_start_time_edit_dialog = false;
                         self.edit_error_message = None;
                     }
 
-                    if ui.button("💾 Salva").clicked() {
+                    if ui.button(t!("save")).clicked() {
                         self.apply_new_start_time();
                     }
                 });
@@ -635,17 +641,17 @@ impl MyEguiApp {
     // END TIME EDIT POPUP
     fn show_end_time_edit_popup(&mut self, ctx: &egui::Context) {
         let mut is_open = self.show_end_time_edit_dialog;
-        egui::Window::new("Modifica Date e Ora di Fine")
+        egui::Window::new(t!("edit_end_time_title"))
             .resizable(false)
             .collapsible(false)
             .open(&mut is_open)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.label("Inserisci la data e l'ora di fine della sessione:");
+                ui.label(t!("enter_end_time"));
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    ui.label("Data (YYYY-MM-DD):");
+                    ui.label(t!("date_label"));
                     let mut date_input = self.edited_end_date.clone();
                     if ui.text_edit_singleline(&mut date_input).changed() {
                         self.edited_end_date = date_input.trim().to_string();
@@ -653,7 +659,7 @@ impl MyEguiApp {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Ora:");
+                    ui.label(t!("hour"));
                     let mut hour_input = self.edited_end_hour.to_string();
                     if ui.text_edit_singleline(&mut hour_input).changed() {
                         if let Ok(h) = hour_input.trim().parse::<u32>() {
@@ -663,7 +669,7 @@ impl MyEguiApp {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Minuti:");
+                    ui.label(t!("minute"));
                     let mut min_input = self.edited_end_minute.to_string();
                     if ui.text_edit_singleline(&mut min_input).changed() {
                         if let Ok(m) = min_input.trim().parse::<u32>() {
@@ -678,7 +684,7 @@ impl MyEguiApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("💾 Salva").clicked() {
+                    if ui.button(t!("save")).clicked() {
                         self.apply_new_end_time();
                     }
                 });
@@ -689,7 +695,7 @@ impl MyEguiApp {
     fn top_controls(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let text_response = ui.add(
-                TextEdit::singleline(&mut self.input_text).hint_text("A cosa stai lavorando?"),
+                TextEdit::singleline(&mut self.input_text).hint_text(t!("what_are_you_working_on")),
             );
 
             let button_text = if self.is_playing { "⏹" } else { "▶" };
@@ -711,7 +717,8 @@ impl MyEguiApp {
 
             // Time display - clickable only when timer is active
             let time_label_response = ui.label(format!(
-                "Tempo: {}",
+                "{}: {}",
+                t!("elapsed_time"),
                 format_duration(self.elapsed, DurationFormat::WithSeconds)
             ));
             if self.is_playing && time_label_response.clicked() {
@@ -735,7 +742,7 @@ impl MyEguiApp {
                 |ui| {
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
-                            ui.label(format!("Data: {}", date));
+                            ui.label(format!("{}: {}", t!("date"), date));
                             let mut total_time = self.calculate_total_time();
 
                             // Add active session time if it's for today
@@ -752,7 +759,8 @@ impl MyEguiApp {
                             }
 
                             ui.label(format!(
-                                "Totale: {}",
+                                "{}: {}",
+                                t!("total_time"),
                                 format_duration(total_time, DurationFormat::WithSeconds)
                             ));
                         });
@@ -774,13 +782,14 @@ impl MyEguiApp {
                                     .cloned()
                                     .unwrap_or_else(|| Duration::zero());
                                 ui.label(format!(
-                                    "Totale: {}",
+                                    "{}: {}",
+                                    t!("total_time"),
                                     format_duration(duration, DurationFormat::WithSeconds)
                                 ));
                             });
                             for duration in durations {
                                 ui.horizontal(|ui| {
-                                    ui.label("   sessione:");
+                                    ui.label(format!("{}:", t!("session")));
                                     ui.label(format_duration(
                                         duration,
                                         DurationFormat::WithSeconds,
