@@ -299,6 +299,23 @@ impl MyEguiApp {
             }
         });
 
+        self.elapsed = new_end_utc.signed_duration_since(self.start_time.unwrap());
+
+        let date = self.start_time.expect("expected stat_time").format("%Y-%m-%d").to_string();
+        self.table_data
+            .entry(date)
+            .or_default()
+            .entry(self.input_text.clone())
+            .or_default()
+            .push(self.elapsed);
+        // Calcola il totale delle sessioni per ogni giorno
+        self.table_data_totals();
+
+        self.session_id = None;
+        self.start_time = None;
+        self.elapsed = Duration::zero();
+        self.input_text = "".to_string();
+
         // Close dialog
         self.show_end_time_edit_dialog = false;
         self.edit_error_message = None;
@@ -489,6 +506,8 @@ impl MyEguiApp {
                         self.show_recovery_dialog = false;
 
                         self.session_id = Some(session.id);
+                        self.start_time = DateTime::<Utc>::from_timestamp(session.start_time, 0);
+                        self.input_text = session.description.clone();
                         self.open_end_time_edit_dialog();
                     }
 
@@ -552,8 +571,6 @@ impl MyEguiApp {
                     }
                 });
             });
-
-        self.show_time_edit_dialog = is_open;
     }
 
     // END TIME EDIT POPUP
@@ -607,8 +624,6 @@ impl MyEguiApp {
                     }
                 });
             });
-
-        self.show_end_time_edit_dialog = is_open;
     }
 
     // TOP CONTROLS
