@@ -3,7 +3,11 @@
 use std::fs::File;
 use std::path::Path;
 
+mod config;
+
+use confy;
 use log::LevelFilter;
+use rust_i18n::set_locale;
 use simplelog::{Config, WriteLogger};
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -16,18 +20,22 @@ use bambana_seto::ui::app::MyEguiApp;
 // entry point
 #[tokio::main]
 async fn main() -> eframe::Result {
-    let log_path = ".data/bambana.log";
-    ensure_log_dir(log_path).map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
+    let config: config::Config = confy::load("bambana-seto", None)
+        .map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
+
+    set_locale(&config.locale);
+
+    ensure_log_dir(&config.log_path).map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
     WriteLogger::init(
         LevelFilter::Info,
         Config::default(),
-        File::create(log_path).unwrap(),
+        File::create(&config.log_path).unwrap(),
     )
     .unwrap();
-    log::info!("Starting bambana_seto...");
+    log::info!("Starting bambana_seto with config: {config:?}");
 
-    let database_url = "sqlite:.data/bambana.db";
-    let db = dbManager::open_db(database_url)
+    let database_url = config.database_url();
+    let db = dbManager::open_db(&database_url)
         .await
         .map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
     let sessions = dbManager::load_recent_sessions(&db)

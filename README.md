@@ -80,6 +80,23 @@ Just run the executable and start tracking.
 
 ***
 
+## ⚙️ Settings
+
+Once the application starts, it's create the configurazion file under:
+
+```
+%APPDATA%\bambana-seto\config\default-config.toml
+```
+
+You can then change the setting, like the locale (supported it and en).
+
+```
+log_path = ".data/bambana.log"
+database_path = ".data/bambana.db"
+locale = "en"
+```
+
+
 ## 🗂️ Data Storage
 
 The application stores data in a local SQLite database file.
