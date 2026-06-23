@@ -20,7 +20,7 @@ pub fn get_last_input() -> Duration {
 }
 
 const IDLE_CHECK_SECS: u64 = 1;
-const IDLE_PERIOD_SECS: u64 = 10;
+const IDLE_PERIOD_SECS: u64 = 10 * 60; // 10 minutes
 
 pub fn start_idle_watcher(
     idle_return_tx: tokio::sync::mpsc::UnboundedSender<Duration>,
