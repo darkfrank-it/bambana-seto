@@ -200,6 +200,17 @@ impl MyEguiApp {
         }
     }
 
+    // Resets the state of the timer
+    fn reset_timer_state(&mut self) {
+        
+            self.input_text = "".to_string();
+            self.session_id = None;
+            self.is_playing = false;
+            self.start_time = None;
+            self.elapsed = Duration::zero();
+            self.pending_idle_duration = None;
+    }
+
     // Opens a dialog to edit the start time of the current session
     fn open_time_edit_dialog(&mut self) {
         // Pre-populate with current local time
@@ -320,10 +331,8 @@ impl MyEguiApp {
         // Calcola il totale delle sessioni per ogni giorno
         self.table_data_totals();
 
-        self.session_id = None;
-        self.start_time = None;
-        self.elapsed = Duration::zero();
-        self.input_text = "".to_string();
+        // reset timer
+        self.reset_timer_state();
 
         // Close dialog
         self.show_end_time_edit_dialog = false;
@@ -389,19 +398,21 @@ impl MyEguiApp {
         self.close_current_db_session_at(id, session_end.timestamp());
 
         let date = Utc::now().format("%Y-%m-%d").to_string();
+        let elapsed = self.elapsed
+            - self
+                .pending_idle_duration
+                .unwrap_or_else(|| Duration::zero());
         self.table_data
             .entry(date)
             .or_default()
             .entry(self.input_text.clone())
             .or_default()
-            .push(self.elapsed);
+            .push(elapsed);
         // Calcola il totale delle sessioni per ogni giorno
         self.table_data_totals();
 
-        self.session_id = None;
-        self.start_time = None;
-        self.elapsed = Duration::zero();
-        self.input_text = "".to_string();
+        // reset timer
+        self.reset_timer_state();
     }
 
     fn prompt_idle_recovery(&mut self, offline_duration: Duration) {
@@ -717,7 +728,7 @@ impl MyEguiApp {
                                 ui.label(desc);
                                 let duration = self
                                     .table_data_totals
-                                    .get(&date)
+                                    .get(&desc)
                                     .cloned()
                                     .unwrap_or_else(|| Duration::zero());
                                 ui.label(format!(
