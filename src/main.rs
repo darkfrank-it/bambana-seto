@@ -1,6 +1,7 @@
 // #![windows_subsystem = "windows"]
 
 use std::fs::File;
+use std::path::Path;
 
 use log::LevelFilter;
 use simplelog::{Config, WriteLogger};
@@ -10,17 +11,19 @@ use eframe::egui;
 
 use bambana_seto::capture::idle_sentinel as idleSentinel;
 use bambana_seto::database::db_manager as dbManager;
-use bambana_seto::ui::app::{MyEguiApp};
+use bambana_seto::ui::app::MyEguiApp;
 
 // entry point
 #[tokio::main]
 async fn main() -> eframe::Result {
-    
+    let log_path = ".data/bambana.log";
+    ensure_log_dir(log_path).map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
     WriteLogger::init(
         LevelFilter::Info,
         Config::default(),
-        File::create(".data/bambana.log").unwrap(),
-    ).unwrap();
+        File::create(log_path).unwrap(),
+    )
+    .unwrap();
     log::info!("Starting bambana_seto...");
 
     let database_url = "sqlite:.data/bambana.db";
@@ -39,21 +42,23 @@ async fn main() -> eframe::Result {
 
     let icon_data = load_icon();
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_icon(icon_data),
+        viewport: egui::ViewportBuilder::default().with_icon(icon_data),
         ..Default::default()
     };
 
     let app = MyEguiApp::with_db(db, &sessions, idle_rx, session_id_tx, session_id_rx);
 
-    eframe::run_native("Bambana, seto!", native_options, Box::new(move |_cc| Ok(Box::new(app))))
+    eframe::run_native(
+        "Bambana, seto!",
+        native_options,
+        Box::new(move |_cc| Ok(Box::new(app))),
+    )
 }
-
 
 fn load_icon() -> egui::IconData {
     // Load the image from bytes (recommended: include_bytes!)
     let image = image::load_from_memory(
-        include_bytes!("..\\assets\\icon.png") // adjust path
+        include_bytes!("..\\assets\\icon.png"), // adjust path
     )
     .expect("Failed to load icon")
     .into_rgba8();
@@ -66,4 +71,16 @@ fn load_icon() -> egui::IconData {
         width,
         height,
     }
+}
+
+pub fn ensure_log_dir(log_dir: &str) -> Result<(), std::io::Error> {
+    let log_path = Path::new(log_dir);
+
+    if let Some(parent) = log_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
+    Ok(())
 }

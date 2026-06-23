@@ -29,11 +29,11 @@ pub struct MyEguiApp {
     show_idle_dialog: bool,
     pending_idle_duration: Option<Duration>,
     idle_return_rx: UnboundedReceiver<Duration>,
-    // Time start editing dialog state
-    show_time_edit_dialog: bool,
+    // Start time editing dialog state
+    show_start_time_edit_dialog: bool,
     edited_start_hour: u32,
     edited_start_minute: u32,
-    // Time end editing dialog state
+    // End time editing dialog state
     show_end_time_edit_dialog: bool,
     edited_end_date: String,
     edited_end_hour: u32,
@@ -67,12 +67,8 @@ impl eframe::App for MyEguiApp {
             self.show_idle_popup(ctx);
         }
 
-        if self.show_time_edit_dialog {
-            self.show_time_edit_popup(ctx);
-        }
-
-        if self.show_time_edit_dialog {
-            self.show_time_edit_popup(ctx);
+        if self.show_start_time_edit_dialog {
+            self.show_start_time_edit_popup(ctx);
         }
 
         if self.show_end_time_edit_dialog {
@@ -114,7 +110,7 @@ impl MyEguiApp {
             idle_return_rx,
             session_id_tx,
             session_id_rx,
-            show_time_edit_dialog: false,
+            show_start_time_edit_dialog: false,
             edited_start_hour: 0,
             edited_start_minute: 0,
             show_end_time_edit_dialog: false,
@@ -211,7 +207,7 @@ impl MyEguiApp {
         self.edited_start_hour = now.hour() as u32;
         self.edited_start_minute = now.minute() as u32;
         self.edit_error_message = None;
-        self.show_time_edit_dialog = true;
+        self.show_start_time_edit_dialog = true;
     }
 
     fn open_end_time_edit_dialog(&mut self) {
@@ -235,6 +231,12 @@ impl MyEguiApp {
             return;
         }
 
+        log::info!(
+            "Editing start time to: {:02}:{:02}",
+            self.edited_start_hour,
+            self.edited_start_minute
+        );
+
         // Calculate new start_time as today at the specified hour:minute in Local time
         let now = Utc::now();
         let new_start_local = now
@@ -247,6 +249,9 @@ impl MyEguiApp {
             .expect("valid time");
 
         let new_start_utc = new_start_local.and_utc();
+
+        self.start_time = Some(new_start_utc);
+        self.elapsed = Utc::now().signed_duration_since(new_start_utc);
 
         let id = self.session_id.expect("No active session");
 
@@ -262,7 +267,7 @@ impl MyEguiApp {
         });
 
         // Close dialog
-        self.show_time_edit_dialog = false;
+        self.show_start_time_edit_dialog = false;
         self.edit_error_message = None;
     }
 
@@ -301,7 +306,11 @@ impl MyEguiApp {
 
         self.elapsed = new_end_utc.signed_duration_since(self.start_time.unwrap());
 
-        let date = self.start_time.expect("expected stat_time").format("%Y-%m-%d").to_string();
+        let date = self
+            .start_time
+            .expect("expected stat_time")
+            .format("%Y-%m-%d")
+            .to_string();
         self.table_data
             .entry(date)
             .or_default()
@@ -521,9 +530,9 @@ impl MyEguiApp {
             });
     }
 
-    // TIME EDIT POPUP
-    fn show_time_edit_popup(&mut self, ctx: &egui::Context) {
-        let mut is_open = self.show_time_edit_dialog;
+    // START TIME EDIT POPUP
+    fn show_start_time_edit_popup(&mut self, ctx: &egui::Context) {
+        let mut is_open = self.show_start_time_edit_dialog;
         egui::Window::new("Modifica Ora di Inizio")
             .resizable(false)
             .collapsible(false)
@@ -535,8 +544,7 @@ impl MyEguiApp {
 
                 ui.horizontal(|ui| {
                     ui.label("Ora:");
-                    let hour_str = self.edited_start_hour.to_string();
-                    let mut hour_input = hour_str.clone();
+                    let mut hour_input = self.edited_start_hour.to_string();
                     if ui.text_edit_singleline(&mut hour_input).changed() {
                         if let Ok(h) = hour_input.trim().parse::<u32>() {
                             self.edited_start_hour = h;
@@ -546,8 +554,7 @@ impl MyEguiApp {
 
                 ui.horizontal(|ui| {
                     ui.label("Minuti:");
-                    let min_str = self.edited_start_minute.to_string();
-                    let mut min_input = min_str.clone();
+                    let mut min_input = self.edited_start_minute.to_string();
                     if ui.text_edit_singleline(&mut min_input).changed() {
                         if let Ok(m) = min_input.trim().parse::<u32>() {
                             self.edited_start_minute = m;
@@ -562,7 +569,7 @@ impl MyEguiApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Annulla").clicked() {
-                        self.show_time_edit_dialog = false;
+                        self.show_start_time_edit_dialog = false;
                         self.edit_error_message = None;
                     }
 
