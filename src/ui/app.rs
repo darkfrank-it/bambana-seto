@@ -33,6 +33,7 @@ pub struct MyEguiApp {
     show_idle_dialog: bool,
     pending_idle_duration: Option<Duration>,
     idle_return_rx: UnboundedReceiver<Duration>,
+    resume_start_time: Option<DateTime<Utc>>,
     // Start time editing dialog state
     show_start_time_edit_dialog: bool,
     edited_start_hour: u32,
@@ -47,6 +48,8 @@ pub struct MyEguiApp {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_pixels_per_point(1.1); // 1.0 è default
+
         if self.is_playing {
             let start_time = self.start_time.expect("Expect running session!");
             self.elapsed = Utc::now() - start_time;
@@ -108,6 +111,7 @@ impl MyEguiApp {
             is_playing: false,
             start_time: None,
             elapsed: Duration::zero(),
+            resume_start_time: None,
             show_recovery_dialog: false,
             show_idle_dialog: false,
             pending_idle_duration: None,
@@ -137,6 +141,7 @@ impl MyEguiApp {
                 "Pending session recovery found: {:?}",
                 self.pending_session_recovery
             );
+            self.resume_start_time = Some(Utc::now());
             // richiama l'attenzione della finestra principale quando il popup è aperto
             notify_rust::Notification::new()
                 .summary(&t!("recovery_title").to_string())
@@ -216,7 +221,7 @@ impl MyEguiApp {
         let desired_title = if self.is_playing && !self.input_text.is_empty() {
             self.input_text.clone()
         } else {
-           t!("window_title").to_string()
+            t!("window_title").to_string()
         };
 
         if desired_title != self.current_window_title {
@@ -367,7 +372,13 @@ impl MyEguiApp {
         self.start_time = Some(Utc::now());
         self.elapsed = Duration::zero();
 
-        let start_time = Utc::now().timestamp();
+        let start_time = if self.resume_start_time.is_some() {
+            self.resume_start_time.unwrap().timestamp()
+        } else {
+            Utc::now().timestamp()
+        };
+        self.resume_start_time = None;
+
         let description = self.input_text.trim();
         let description = if description.is_empty() {
             t!("no_description").to_string()
@@ -458,6 +469,7 @@ impl MyEguiApp {
             .show()
             .unwrap();
 
+        self.resume_start_time = Some(Utc::now());
         self.pending_idle_duration = Some(offline_duration);
         self.show_idle_dialog = true;
     }
@@ -478,13 +490,13 @@ impl MyEguiApp {
                 let datetime: DateTime<Utc> = current.into();
                 let formatted = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
 
-                ui.heading(t!("idle_session_title"));
-                ui.label(format!("{}: {}", t!("description_label"), self.input_text));
+                ui.heading(t!("idle_session_body"));
+                ui.label(format!("{}: {}", t!("running_task"), self.input_text));
                 ui.label(format!("{}: {}", t!("started_label"), formatted));
 
                 ui.label(format!(
                     "{}: {}",
-                    t!("inactive_time_label"),
+                    t!("idle_time_label"),
                     format_duration(
                         self.pending_idle_duration
                             .unwrap_or_else(|| Duration::zero()),
@@ -493,11 +505,12 @@ impl MyEguiApp {
                 ));
 
                 ui.separator();
-                ui.label(t!("what_are_you_working_on"));
+                ui.label(t!("what_do_you_want_to_do_with_idle_time"));
                 ui.separator();
 
                 if ui.button(t!("keep_time_continue")).clicked() {
                     self.pending_idle_duration = None;
+                    self.resume_start_time = None;
                     self.show_idle_dialog = false;
                 }
 
@@ -505,6 +518,7 @@ impl MyEguiApp {
                     self.end_session();
 
                     self.pending_idle_duration = None;
+                    self.resume_start_time = None;
                     self.show_idle_dialog = false;
                 }
 
@@ -518,6 +532,7 @@ impl MyEguiApp {
                     self.begin_session();
 
                     self.pending_idle_duration = None;
+                    self.resume_start_time = None;
                     self.show_idle_dialog = false;
                 }
             });
@@ -526,31 +541,35 @@ impl MyEguiApp {
     // RECOVERY POPUP
     fn show_recovery_popup(&mut self, ctx: &egui::Context) {
         let mut is_open = self.show_recovery_dialog;
-        egui::Window::new(&t!("recovery_title").to_string())
+        egui::Window::new(t!("recovery_title").to_string())
             .resizable(false)
             .collapsible(false)
             .open(&mut is_open)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 if let Some(session) = self.pending_session_recovery.clone() {
-                    ui.heading(&t!("recovery_title").to_string());
-                    ui.label(format!("{}: {}", t!("description_label"), session.description));
+                    ui.heading(t!("recovery_body").to_string());
+                    ui.label(format!(
+                        "{}: {}",
+                        t!("running_task"),
+                        session.description
+                    ));
 
                     let start_time = Utc.timestamp_opt(session.start_time, 0).single();
                     let date = start_time.unwrap().format("%Y-%m-%d %H:%M").to_string();
-                    ui.label(format!("{}: {}" ,t!("started_label"), date));
+                    ui.label(format!("{}: {}", t!("started_label"), date));
 
                     let afk_duration: Duration = Utc::now()
                         .signed_duration_since(Utc.timestamp_opt(session.start_time, 0).unwrap());
                     //let afk_duration
                     ui.label(format!(
                         "{}: {}",
-                        t!("total_label"),
+                        t!("inactive_time_label"),
                         format_duration(afk_duration, DurationFormat::WithoutSeconds)
                     ));
 
                     ui.separator();
-                    ui.label(t!("what_are_you_working_on"));
+                    ui.label(t!("what_do_you_want_to_do_with_inactive_time"));
                     ui.separator();
 
                     if ui.button(t!("recovery_keep_continue")).clicked() {
@@ -562,14 +581,13 @@ impl MyEguiApp {
                         self.elapsed = self.start_time.unwrap().signed_duration_since(Utc::now());
 
                         self.pending_session_recovery = None;
+                        self.resume_start_time = None;
                         self.show_recovery_dialog = false;
                     }
 
-                    if ui
-                        .button(t!("recovery_end_session"))
-                        .clicked()
-                    {
+                    if ui.button(t!("recovery_end_with_time")).clicked() {
                         self.pending_session_recovery = None;
+                        self.resume_start_time = None;
                         self.show_recovery_dialog = false;
 
                         self.session_id = Some(session.id);
@@ -578,9 +596,10 @@ impl MyEguiApp {
                         self.open_end_time_edit_dialog();
                     }
 
-                    if ui.button(t!("discard_time")).clicked() {
+                    if ui.button(t!("recovery_discard")).clicked() {
                         self.delete_db_session(session.id);
 
+                        self.resume_start_time = None;
                         self.pending_session_recovery = None;
                         self.show_recovery_dialog = false;
                     }
@@ -601,7 +620,7 @@ impl MyEguiApp {
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    ui.label(t!("hour"));
+                    ui.label(t!("hour_label"));
                     let mut hour_input = self.edited_start_hour.to_string();
                     if ui.text_edit_singleline(&mut hour_input).changed() {
                         if let Ok(h) = hour_input.trim().parse::<u32>() {
@@ -611,7 +630,7 @@ impl MyEguiApp {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label(t!("minute"));
+                    ui.label(t!("minute_label"));
                     let mut min_input = self.edited_start_minute.to_string();
                     if ui.text_edit_singleline(&mut min_input).changed() {
                         if let Ok(m) = min_input.trim().parse::<u32>() {
@@ -659,7 +678,7 @@ impl MyEguiApp {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label(t!("hour"));
+                    ui.label(t!("hour_label"));
                     let mut hour_input = self.edited_end_hour.to_string();
                     if ui.text_edit_singleline(&mut hour_input).changed() {
                         if let Ok(h) = hour_input.trim().parse::<u32>() {
@@ -669,7 +688,7 @@ impl MyEguiApp {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label(t!("minute"));
+                    ui.label(t!("minute_label"));
                     let mut min_input = self.edited_end_minute.to_string();
                     if ui.text_edit_singleline(&mut min_input).changed() {
                         if let Ok(m) = min_input.trim().parse::<u32>() {
@@ -699,11 +718,19 @@ impl MyEguiApp {
             );
 
             let button_text = if self.is_playing { "⏹" } else { "▶" };
+            let button_color = if self.is_playing {
+                egui::Color32::from_rgb(255, 90, 90)
+            } else {
+                egui::Color32::from_rgb(90, 170, 255)
+            };
+            let button = egui::Button::new(button_text)
+                .fill(button_color)
+                .stroke(egui::Stroke::new(1.0, button_color));
 
             let enter_pressed =
                 text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
-            if ui.button(button_text).clicked() || enter_pressed {
+            if ui.add(button).clicked() || enter_pressed {
                 if self.is_playing {
                     if enter_pressed {
                         self.update_session_description();
@@ -735,72 +762,93 @@ impl MyEguiApp {
             .rev()
             .map(|(date, tasks)| (date.clone(), tasks.clone()))
             .collect();
+        let today = Utc::now().format("%Y-%m-%d").to_string();
         for (date, tasks) in entries {
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(format!("{}: {}", t!("date"), date));
-                            let mut total_time = self.calculate_total_time();
+            let mut total_time = self.calculate_total_time();
+            // Add active session time if it's for today
+            if self.is_playing {
+                if date == today {
+                    let base_total: Duration = self
+                        .table_data_totals
+                        .get(&date)
+                        .cloned()
+                        .unwrap_or_else(|| Duration::zero());
+                    total_time = base_total + self.elapsed;
+                }
+            }
+            let total_time_label = format!(
+                "{} {} - {}: {}",
+                t!("date_label"),
+                date,
+                t!("total_time"),
+                format_duration(total_time, DurationFormat::WithSeconds)
+            );
+            let open = date == today;
 
-                            // Add active session time if it's for today
-                            if self.is_playing {
-                                let today = Utc::now().format("%Y-%m-%d").to_string();
-                                if date == today {
-                                    let base_total: Duration = self
+            egui::CollapsingHeader::new(total_time_label)
+                .id_salt(&date) // importante se cambia label
+                .default_open(open)
+                .show(ui, |ui| {
+                    ui.group(|ui| {
+                        egui::Grid::new(format!("tasks_grid_{}", date))
+                            .striped(true) // righe alternate
+                            .spacing([16.0, 6.0]) // spazio tra colonne/righe
+                            .show(ui, |ui| {
+                                // 🔹 Header tabella
+                                ui.label("");
+                                ui.label(t!("task_label"));
+                                ui.label(t!("session_label"));
+                                ui.label(t!("total_time"));
+                                ui.end_row();
+
+                                for (desc, durations) in tasks {
+                                    let key = format!("{}_{}", date, desc);
+                                    let total_duration = self
                                         .table_data_totals
-                                        .get(&date)
+                                        .get(&key)
                                         .cloned()
                                         .unwrap_or_else(|| Duration::zero());
-                                    total_time = base_total + self.elapsed;
-                                }
-                            }
 
-                            ui.label(format!(
-                                "{}: {}",
-                                t!("total_time"),
-                                format_duration(total_time, DurationFormat::WithSeconds)
-                            ));
-                        });
-                        for (desc, durations) in tasks {
-                            ui.horizontal(|ui| {
-                                if ui.button("▶").clicked() {
-                                    if self.is_playing {
-                                        self.end_session();
-                                    }
+                                    // 🔹 Riga principale (task)
+                                    ui.horizontal(|ui| {
+                                        if ui.button("▶").clicked() {
+                                            if self.is_playing {
+                                                self.end_session();
+                                            }
 
-                                    self.input_text = desc.clone();
-                                    self.begin_session();
-                                }
-                                ui.label(&desc);
-                                let key = format!("{}_{}", date, desc);
-                                let duration = self
-                                    .table_data_totals
-                                    .get(&key)
-                                    .cloned()
-                                    .unwrap_or_else(|| Duration::zero());
-                                ui.label(format!(
-                                    "{}: {}",
-                                    t!("total_time"),
-                                    format_duration(duration, DurationFormat::WithSeconds)
-                                ));
-                            });
-                            for duration in durations {
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("{}:", t!("session")));
+                                            self.input_text = desc.clone();
+                                            self.begin_session();
+                                        }
+                                    });
+
+                                    ui.label(&desc);
+
                                     ui.label(format_duration(
-                                        duration,
+                                        total_duration,
                                         DurationFormat::WithSeconds,
                                     ));
-                                });
-                            }
-                        }
+
+                                    ui.label(""); // vuoto per allineare colonna session
+                                    ui.end_row();
+
+                                    // 🔹 Righe delle sessioni
+                                    for duration in durations {
+                                        ui.label(""); // niente play
+                                        ui.label(t!("session_label")); // indent visivo
+
+                                        ui.label(""); // niente totale
+
+                                        ui.label(format_duration(
+                                            duration,
+                                            DurationFormat::WithSeconds,
+                                        ));
+
+                                        ui.end_row();
+                                    }
+                                }
+                            });
                     });
-                    ui.separator();
-                },
-            );
+                });
         }
     }
 }
