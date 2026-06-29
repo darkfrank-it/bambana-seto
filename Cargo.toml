@@ -3,7 +3,7 @@ name = "bambana-seto"
 description = "A tiny time tracker that doesn’t waste your time."
 authors = ["Nicola Danese <nicola.danese@e-projectsrl.it>"]
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "**/*.rc", "locales/**", "assets/**", "Cargo.toml"]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 build = "build.rs"
 # https://github.com/emilk/eframe_template/blob/main/Cargo.toml
