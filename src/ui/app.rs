@@ -210,12 +210,6 @@ impl MyEguiApp {
         }
     }
 
-    fn calculate_total_time(&self) -> Duration {
-        self.table_data_totals
-            .values()
-            .fold(Duration::zero(), |acc, d| acc + *d)
-    }
-
     // Updates the window title based on current session state
     fn update_window_title(&mut self, ctx: &egui::Context) {
         let desired_title = if self.is_playing && !self.input_text.is_empty() {
@@ -764,16 +758,15 @@ impl MyEguiApp {
             .collect();
         let today = Utc::now().format("%Y-%m-%d").to_string();
         for (date, tasks) in entries {
-            let mut total_time = self.calculate_total_time();
-            // Add active session time if it's for today
-            if self.is_playing {
-                if date == today {
-                    let base_total: Duration = self
+            let mut total_time: Duration =  self
                         .table_data_totals
                         .get(&date)
                         .cloned()
                         .unwrap_or_else(|| Duration::zero());
-                    total_time = base_total + self.elapsed;
+            // Add active session time if it's for today
+            if self.is_playing {
+                if date == today {
+                    total_time = total_time + self.elapsed;
                 }
             }
             let total_time_label = format!(
