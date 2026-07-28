@@ -1,136 +1,146 @@
 # 🍝 Bambana, seto!
 
-*"Perdi tempo, sai!" ("You're wasting your time, you know!") — A tiny time tracker that doesn’t waste your time.*
+*“Bambana, seto!” (“You’re wasting your time on childish things, you know!”) — A tiny time tracker that doesn’t waste your time.*
 
-**Bambana, seto!** is a lightweight, no-nonsense desktop time tracking app written in Rust.  
-
-Developed with the help of **GitHub Copilot** and **artificial intelligence** to accelerate deployment while maintaining clarity and simplicity.
-
-It’s built for people who want to track what they do — without dealing with bloated tools, accounts, or browsers.
+**Bambana, seto!** is a lightweight desktop time tracking app written in Rust.
+It is designed to be simple, offline-first, and free from browser-based or cloud-heavy workflows.
 
 ***
 
-## ✨ Features
+## ✨ What it does
 
-### ✅ Works Offline
-
-No internet required. Use it anywhere — even completely disconnected.
-
-### 🖥️ No Browser Required
-
-This is a native desktop application.  
-No tabs, no web UI, no background browser processes.
-
-### 🎯 Minimalist Interface
-
-Just the essentials:
-
-* Start / Stop tracking
-* Task name
-* Description
-
-No distractions. No unnecessary buttons.
-
-### ⚡ Native Performance
-
-Built in Rust with **egui/eframe**.  
-Consumes minimal RAM and CPU.
-
-### 💾 Data in Your Hands
-
-All data is stored locally in a **SQLite database**.  
-You can:
-
-* Open and inspect it with tools like DB Browser for SQLite
-* Modify it with third‑party applications
-* Export it to CSV if needed
-
-### 🔗 Easy Integration
-
-Want charts or reports?
-
-* Open the database directly
-* Export to CSV and use Excel, Google Sheets, or Python scripts
-
-Your data stays **simple and accessible**.
-
-### 🆓 Free & Open Source
-
-Released under the **MIT License**.  
-You are free to use, modify, and redistribute it.
-
-### 🚧 Future: Cross-Platform
-
-* ✅ Windows (current)
-* 🔜 Linux support coming
-* 🔜 macOS support coming
+- Track work sessions with a task name and optional description
+- Start/stop timing with a clean, minimal interface
+- Save all data locally in SQLite
+- Run as a native Windows app with no browser required
 
 ***
 
-## 🚀 Getting Started
+## 🚀 Why it exists
+
+This project is for people who want to track time without adding complexity.
+It avoids unnecessary modes, hidden syncing, and bloated UI patterns.
+
+***
+
+## ✅ Features
+
+- **Offline-first**: works without internet access
+- **Native desktop app**: no browser, no web UI, no background browser processes
+- **Minimal interface**: only the controls you need
+- **Local storage**: SQLite database in a file you control
+- **Configurable**: change locale, log path, database path, and UI scaling
+- **MIT licensed**: free to use, modify, and redistribute
+
+***
+
+## 🧩 Supported platforms
+
+- ✅ Windows (current)
+- 🔜 Linux (planned)
+- 🔜 macOS (planned)
+
+> The current release targets Windows.
+
+***
+
+## 📦 Download & Run
 
 ### Download
 
-Grab the latest release from the ../../releases page.
+Get the latest release from the GitHub Releases page.
 
 ### Run
 
-No installation required:  
-Just run the executable and start tracking.
+No installer is required.
+Run the executable directly and start tracking.
 
 ***
 
-## ⚙️ Settings
+## 🧭 Quick guide
 
-Once the application starts, it's create the configurazion file under:
+- Type the task name or description in the text field.
+- Press the **▶** button to start tracking.
+- While the timer is running, the button changes to **⏹**.
+- Press **⏹** to stop the session.
+- If you press **Enter** while the timer is running, the current session description is updated.
+- Click the elapsed time display to edit the session start time.
+- If the app detects a period of inactivity, it shows an idle popup with options to keep, discard, or continue tracking.
+- Completed sessions appear in the table below, grouped by date.
+
+***
+
+### Build from source
+
+If you want to build the app yourself:
+
+```bash
+cargo build --release
+```
+
+Then run the generated executable from `target/release`.
+
+***
+
+## ⚙️ Configuration
+
+On Windows, the app stores its configuration using `confy` under:
 
 ```
-%APPDATA%\bambana-seto\config\default-config.toml
+%APPDATA%\bambana-seto\default-config.toml
 ```
 
-You can then change the setting, like the locale (supported it and en).
+The default configuration is:
 
-```
+```toml
 log_path = ".data/bambana.log"
 database_path = ".data/bambana.db"
 locale = "en"
+pixels_per_point = 1.2
 ```
 
+- `log_path`: path for the log file
+- `database_path`: path for the SQLite database file
+- `locale`: supported values are `en` and `it`
+- `pixels_per_point`: UI scaling value for high-DPI screens
 
-## 🗂️ Data Storage
+A relative path like `.data/bambana.db` is resolved from the application’s working directory.
 
-The application stores data in a local SQLite database file.
+***
 
-Typical location:
+## 🗂️ Data storage
+
+The app saves tracking data in a local SQLite database.
+The default database file is:
 
 ```
-./data/bambana.db
+./.data/bambana.db
 ```
 
-You can open it with tools like:
+You can open this file with:
 
-* DB Browser for SQLite
-* SQLite CLI
-* Any compatible library or script
+- DB Browser for SQLite
+- SQLite CLI
+- Any SQLite-compatible library or script
 
 ***
 
 ## 🤝 Contributing
 
-Contributions are welcome!  
-Feel free to:
+Contributions are welcome.
+Please feel free to:
 
-* Open issues
-* Suggest improvements
-* Submit pull requests
+- open issues
+- suggest improvements
+- submit pull requests
 
-Keep it simple, fast, and minimal — that’s the spirit of *Bambana, seto!*.
+Keep changes aligned with the project’s minimalist, fast, and local-first philosophy.
 
 ***
 
 ## 📜 License
 
-This project is licensed under the **MIT License**.  
+This project is licensed under the **MIT License**.
 See the `LICENSE` file for details.
 
 ***
@@ -139,5 +149,4 @@ See the `LICENSE` file for details.
 
 > Software should help you focus — not steal your attention.
 
-**Bambana, seto!** exists to track time…  
-without becoming another thing that wastes it.
+**Bambana, seto!** exists to track time without becoming another thing that wastes it.

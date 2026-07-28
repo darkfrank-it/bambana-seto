@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs::File;
 use std::path::Path;
@@ -54,7 +54,14 @@ async fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    let app = MyEguiApp::with_db(db, &sessions, idle_rx, session_id_tx, session_id_rx);
+    let app = MyEguiApp::with_db(
+        db,
+        &sessions,
+        idle_rx,
+        session_id_tx,
+        session_id_rx,
+        config.pixels_per_point,
+    );
 
     eframe::run_native(
         "Bambana, seto!",

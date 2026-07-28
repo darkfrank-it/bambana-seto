@@ -15,6 +15,8 @@ pub struct MyEguiApp {
     db: SqlitePool,
     current_window_title: String,
 
+    pixels_per_point: f32,
+
     table_data: BTreeMap<String, HashMap<String, Vec<Duration>>>,
     table_data_totals: HashMap<String, Duration>,
     pending_session_recovery: Option<StoredSession>,
@@ -26,7 +28,6 @@ pub struct MyEguiApp {
     elapsed: Duration,
     session_id_tx: UnboundedSender<i64>,
     session_id_rx: UnboundedReceiver<i64>,
-
     // Recovery dialog state
     show_recovery_dialog: bool,
     // Idle detection state
@@ -48,7 +49,7 @@ pub struct MyEguiApp {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_pixels_per_point(1.1); // 1.0 è default
+        ctx.set_pixels_per_point(self.pixels_per_point);
 
         if self.is_playing {
             let start_time = self.start_time.expect("Expect running session!");
@@ -99,6 +100,7 @@ impl MyEguiApp {
         idle_return_rx: UnboundedReceiver<Duration>,
         session_id_tx: UnboundedSender<i64>,
         session_id_rx: UnboundedReceiver<i64>,
+        pixels_per_point: f32,
     ) -> Self {
         Self {
             db,
@@ -111,13 +113,14 @@ impl MyEguiApp {
             is_playing: false,
             start_time: None,
             elapsed: Duration::zero(),
+            session_id_tx,
+            session_id_rx,
+            pixels_per_point,
             resume_start_time: None,
             show_recovery_dialog: false,
             show_idle_dialog: false,
             pending_idle_duration: None,
             idle_return_rx,
-            session_id_tx,
-            session_id_rx,
             show_start_time_edit_dialog: false,
             edited_start_hour: 0,
             edited_start_minute: 0,
@@ -750,99 +753,105 @@ impl MyEguiApp {
 
     // TABLE DISPLAY
     fn show_table(&mut self, ui: &mut Ui) {
-        let entries: Vec<(String, HashMap<String, Vec<Duration>>)> = self
-            .table_data
-            .iter()
-            .rev()
-            .map(|(date, tasks)| (date.clone(), tasks.clone()))
-            .collect();
-        let today = Utc::now().format("%Y-%m-%d").to_string();
-        for (date, tasks) in entries {
-            let mut total_time: Duration =  self
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .max_height(ui.available_height())
+            .show(ui, |ui| {
+                let entries: Vec<(String, HashMap<String, Vec<Duration>>)> = self
+                    .table_data
+                    .iter()
+                    .rev()
+                    .map(|(date, tasks)| (date.clone(), tasks.clone()))
+                    .collect();
+                let today = Utc::now().format("%Y-%m-%d").to_string();
+
+                for (date, tasks) in entries {
+                    let mut total_time: Duration = self
                         .table_data_totals
                         .get(&date)
                         .cloned()
                         .unwrap_or_else(|| Duration::zero());
-            // Add active session time if it's for today
-            if self.is_playing {
-                if date == today {
-                    total_time = total_time + self.elapsed;
-                }
-            }
-            let total_time_label = format!(
-                "{} {} - {}: {}",
-                t!("date_label"),
-                date,
-                t!("total_time"),
-                format_duration(total_time, DurationFormat::WithSeconds)
-            );
-            let open = date == today;
+                    // Add active session time if it's for today
+                    if self.is_playing {
+                        if date == today {
+                            total_time = total_time + self.elapsed;
+                        }
+                    }
+                    let total_time_label = format!(
+                        "{}  {}              {}:  {}",
+                        t!("date_label"),
+                        date,
+                        t!("total_time"),
+                        format_duration(total_time, DurationFormat::WithSeconds)
+                    );
+                    let open = date == today;
 
-            egui::CollapsingHeader::new(total_time_label)
-                .id_salt(&date) // importante se cambia label
-                .default_open(open)
-                .show(ui, |ui| {
-                    ui.group(|ui| {
-                        egui::Grid::new(format!("tasks_grid_{}", date))
-                            .striped(true) // righe alternate
-                            .spacing([16.0, 6.0]) // spazio tra colonne/righe
-                            .show(ui, |ui| {
-                                // 🔹 Header tabella
-                                ui.label("");
-                                ui.label(t!("task_label"));
-                                ui.label(t!("session_label"));
-                                ui.label(t!("total_time"));
-                                ui.end_row();
+                    egui::CollapsingHeader::new(total_time_label)
+                        .id_salt(&date) // importante se cambia label
+                        .default_open(open)
+                        .show(ui, |ui| {
+                            ui.group(|ui| {
+                                egui::Grid::new(format!("tasks_grid_{}", date))
+                                    .striped(true) // righe alternate
+                                    .spacing([16.0, 6.0]) // spazio tra colonne/righe
+                                    .show(ui, |ui| {
+                                        // 🔹 Header tabella
+                                        ui.label("");
+                                        ui.label(t!("task_label"));
+                                        ui.label(t!("session_label"));
+                                        ui.label(t!("total_time"));
+                                        ui.end_row();
 
-                                for (desc, durations) in tasks {
-                                    let key = format!("{}_{}", date, desc);
-                                    let total_duration = self
-                                        .table_data_totals
-                                        .get(&key)
-                                        .cloned()
-                                        .unwrap_or_else(|| Duration::zero());
+                                        for (desc, durations) in tasks {
+                                            let key = format!("{}_{}", date, desc);
+                                            let total_duration = self
+                                                .table_data_totals
+                                                .get(&key)
+                                                .cloned()
+                                                .unwrap_or_else(|| Duration::zero());
 
-                                    // 🔹 Riga principale (task)
-                                    ui.horizontal(|ui| {
-                                        if ui.button("▶").clicked() {
-                                            if self.is_playing {
-                                                self.end_session();
+                                            // 🔹 Riga principale (task)
+                                            ui.horizontal(|ui| {
+                                                if ui.button("▶").clicked() {
+                                                    if self.is_playing {
+                                                        self.end_session();
+                                                    }
+
+                                                    self.input_text = desc.clone();
+                                                    self.begin_session();
+                                                }
+                                            });
+
+                                            ui.label(&desc);
+
+                                            ui.label(format_duration(
+                                                total_duration,
+                                                DurationFormat::WithSeconds,
+                                            ));
+
+                                            ui.label(""); // vuoto per allineare colonna session
+                                            ui.end_row();
+
+                                            // 🔹 Righe delle sessioni
+                                            for duration in durations {
+                                                ui.label(""); // niente play
+                                                ui.label(t!("session_label")); // indent visivo
+
+                                                ui.label(""); // niente totale
+
+                                                ui.label(format_duration(
+                                                    duration,
+                                                    DurationFormat::WithSeconds,
+                                                ));
+
+                                                ui.end_row();
                                             }
-
-                                            self.input_text = desc.clone();
-                                            self.begin_session();
                                         }
                                     });
-
-                                    ui.label(&desc);
-
-                                    ui.label(format_duration(
-                                        total_duration,
-                                        DurationFormat::WithSeconds,
-                                    ));
-
-                                    ui.label(""); // vuoto per allineare colonna session
-                                    ui.end_row();
-
-                                    // 🔹 Righe delle sessioni
-                                    for duration in durations {
-                                        ui.label(""); // niente play
-                                        ui.label(t!("session_label")); // indent visivo
-
-                                        ui.label(""); // niente totale
-
-                                        ui.label(format_duration(
-                                            duration,
-                                            DurationFormat::WithSeconds,
-                                        ));
-
-                                        ui.end_row();
-                                    }
-                                }
                             });
-                    });
-                });
-        }
+                        });
+                }
+            });
     }
 }
 
