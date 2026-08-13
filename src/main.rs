@@ -44,7 +44,7 @@ async fn main() -> eframe::Result {
 
     // Start the idle watcher and get the receiver for idle durations
     let (idle_tx, idle_rx) = unbounded_channel();
-    idleSentinel::start_idle_watcher(idle_tx);
+    idleSentinel::start_idle_watcher(idle_tx, config.idle_period_secs);
 
     let (session_id_tx, session_id_rx) = unbounded_channel();
 

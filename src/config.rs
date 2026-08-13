@@ -4,6 +4,10 @@ fn default_pixels_per_point() -> f32 {
     1.2
 }
 
+fn default_idle_period_secs() -> u64 {
+    10 * 60
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub log_path: String,
@@ -11,6 +15,8 @@ pub struct Config {
     pub locale: String,
     #[serde(default = "default_pixels_per_point")]
     pub pixels_per_point: f32,
+    #[serde(default = "default_idle_period_secs")]
+    pub idle_period_secs: u64,
 }
 
 impl Default for Config {
@@ -20,6 +26,7 @@ impl Default for Config {
             database_path: ".data/bambana.db".to_string(),
             locale: "en".to_string(),
             pixels_per_point: 1.2,
+            idle_period_secs: default_idle_period_secs(),
         }
     }
 }
@@ -48,5 +55,6 @@ locale = "it"
         assert_eq!(config.log_path, ".data/bambana.log");
         assert_eq!(config.database_path, ".data/bambana.db");
         assert!((config.pixels_per_point - 1.2).abs() < f32::EPSILON);
+        assert_eq!(config.idle_period_secs, 10 * 60);
     }
 }

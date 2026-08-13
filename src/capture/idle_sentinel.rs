@@ -19,8 +19,7 @@ pub fn get_last_input() -> Duration {
     Duration::milliseconds(diff as i64)
 }
 
-const IDLE_CHECK_SECS: u64 = 1;
-const IDLE_PERIOD_SECS: u64 = 60; // 10 minutes
+const IDLE_CHECK_SECS: u64 = 1; // 1 second
 // Un salto dell'orologio di sistema molto più grande dell'intervallo di
 // polling non può essere spiegato da normale jitter dello scheduler: significa
 // che Windows è stato sospeso. GetTickCount/GetLastInputInfo si "congelano"
@@ -28,8 +27,10 @@ const IDLE_PERIOD_SECS: u64 = 60; // 10 minutes
 
 pub fn start_idle_watcher(
     idle_return_tx: tokio::sync::mpsc::UnboundedSender<Duration>,
+    idle_period_secs: u64,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let idle_period = Duration::seconds(idle_period_secs as i64);
         let mut interval = time::interval(std::time::Duration::from_secs(IDLE_CHECK_SECS));
         // Evita di "raffica-recuperare" migliaia di tick mancati dopo una
         // sospensione lunga: al risveglio scatta un solo tick.
@@ -46,7 +47,7 @@ pub fn start_idle_watcher(
             let wall_gap = (now - last_check) + last_idle_duration;
             last_check = now;
 
-            if !was_idle && wall_gap >= Duration::seconds(IDLE_PERIOD_SECS as i64) {
+            if !was_idle && wall_gap >= idle_period {
                 // Ripresa da sospensione mentre l'utente non era già rilevato
                 // come inattivo: segnala il salto di orologio come tempo
                 // offline, altrimenti andrebbe perso.
@@ -59,7 +60,7 @@ pub fn start_idle_watcher(
             let idle_duration = Duration::seconds(duration_secs);
             last_idle_duration = idle_duration;
 
-            if idle_duration >= Duration::seconds(IDLE_PERIOD_SECS as i64) {
+            if idle_duration >= idle_period {
                 if !was_idle {
                     was_idle = true;
                     idle_start = Some(Utc::now() - idle_duration);
