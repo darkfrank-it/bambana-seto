@@ -912,3 +912,261 @@ fn format_duration(d: Duration, fmt: DurationFormat) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tokio::sync::mpsc;
+
+    // ---- session_duration ----
+
+    #[test]
+    fn session_duration_computes_seconds_between_start_and_end() {
+        let session = StoredSession {
+            id: 1,
+            description: "task".into(),
+            start_time: 1_000,
+            end_time: Some(1_090),
+        };
+        assert_eq!(session_duration(&session), Some(Duration::seconds(90)));
+    }
+
+    #[test]
+    fn session_duration_is_none_when_still_open() {
+        let session = StoredSession {
+            id: 1,
+            description: "task".into(),
+            start_time: 1_000,
+            end_time: None,
+        };
+        assert_eq!(session_duration(&session), None);
+    }
+
+    #[test]
+    fn session_duration_is_none_when_end_before_start() {
+        let session = StoredSession {
+            id: 1,
+            description: "task".into(),
+            start_time: 1_000,
+            end_time: Some(500),
+        };
+        assert_eq!(session_duration(&session), None);
+    }
+
+    #[test]
+    fn session_duration_allows_zero_length_session() {
+        let session = StoredSession {
+            id: 1,
+            description: "task".into(),
+            start_time: 1_000,
+            end_time: Some(1_000),
+        };
+        assert_eq!(session_duration(&session), Some(Duration::zero()));
+    }
+
+    // ---- format_duration ----
+
+    #[test]
+    fn format_duration_with_seconds() {
+        let d = Duration::seconds(3_661); // 1h 1m 1s
+        assert_eq!(
+            format_duration(d, DurationFormat::WithSeconds),
+            "01:01:01"
+        );
+    }
+
+    #[test]
+    fn format_duration_without_seconds() {
+        let d = Duration::seconds(3_661);
+        assert_eq!(format_duration(d, DurationFormat::WithoutSeconds), "01:01");
+    }
+
+    #[test]
+    fn format_duration_zero() {
+        assert_eq!(
+            format_duration(Duration::zero(), DurationFormat::WithSeconds),
+            "00:00:00"
+        );
+    }
+
+    #[test]
+    fn format_duration_over_24_hours_does_not_wrap() {
+        let d = Duration::seconds(25 * 3600); // 25h
+        assert_eq!(
+            format_duration(d, DurationFormat::WithSeconds),
+            "25:00:00"
+        );
+    }
+
+    // ---- sessions_to_table_data ----
+
+    #[test]
+    fn sessions_to_table_data_groups_by_date_and_description() {
+        let sessions = vec![
+            StoredSession {
+                id: 1,
+                description: "task a".into(),
+                start_time: 1_700_000_000,
+                end_time: Some(1_700_000_000 + 60),
+            },
+            StoredSession {
+                id: 2,
+                description: "task a".into(),
+                start_time: 1_700_000_200,
+                end_time: Some(1_700_000_200 + 120),
+            },
+        ];
+
+        let (table_data, pending) = sessions_to_table_data(&sessions);
+
+        assert!(pending.is_none());
+        let date = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+        let durations = table_data.get(&date).unwrap().get("task a").unwrap();
+        assert_eq!(
+            durations,
+            &vec![Duration::seconds(60), Duration::seconds(120)]
+        );
+    }
+
+    #[test]
+    fn sessions_to_table_data_reports_open_session_as_pending_recovery() {
+        let sessions = vec![StoredSession {
+            id: 1,
+            description: "task a".into(),
+            start_time: 1_700_000_000,
+            end_time: None,
+        }];
+
+        let (table_data, pending) = sessions_to_table_data(&sessions);
+
+        assert!(table_data.is_empty());
+        assert_eq!(pending.unwrap().id, 1);
+    }
+
+    #[test]
+    fn sessions_to_table_data_skips_sessions_with_invalid_start_time() {
+        let sessions = vec![StoredSession {
+            id: 1,
+            description: "task a".into(),
+            start_time: i64::MAX,
+            end_time: Some(i64::MAX),
+        }];
+
+        let (table_data, pending) = sessions_to_table_data(&sessions);
+
+        assert!(table_data.is_empty());
+        assert!(pending.is_none());
+    }
+
+    // ---- start/end time edit validation ----
+
+    static TEST_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    // Wraps a MyEguiApp backed by a temp db file and removes the file once
+    // the test is done, so repeated test runs don't leave junk in the temp dir.
+    struct TestApp {
+        app: MyEguiApp,
+        path: std::path::PathBuf,
+    }
+
+    impl std::ops::Deref for TestApp {
+        type Target = MyEguiApp;
+        fn deref(&self) -> &MyEguiApp {
+            &self.app
+        }
+    }
+
+    impl std::ops::DerefMut for TestApp {
+        fn deref_mut(&mut self) -> &mut MyEguiApp {
+            &mut self.app
+        }
+    }
+
+    impl TestApp {
+        // SQLite on Windows can't delete a file while a connection still has
+        // it open, so the pool must be closed before removing the file.
+        async fn close(self) {
+            self.app.db.close().await;
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    async fn test_app() -> TestApp {
+        let id = TEST_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "bambana_seto_app_test_{}_{}.db",
+            std::process::id(),
+            id
+        ));
+        let url = format!("sqlite:{}", path.display());
+        let db = dbManager::open_db(&url).await.expect("open test db");
+
+        let (_idle_tx, idle_rx) = mpsc::unbounded_channel();
+        let (session_id_tx, session_id_rx) = mpsc::unbounded_channel();
+
+        let app = MyEguiApp::with_db(db, &[], idle_rx, session_id_tx, session_id_rx, 1.0);
+        TestApp { app, path }
+    }
+
+    #[tokio::test]
+    async fn apply_new_start_time_rejects_invalid_hour() {
+        let mut app = test_app().await;
+        app.show_start_time_edit_dialog = true;
+        app.edited_start_hour = "24".into();
+        app.edited_start_minute = "00".into();
+
+        app.apply_new_start_time();
+
+        assert!(app.edit_error_message.is_some());
+        // On validation failure the dialog must stay open.
+        assert!(app.show_start_time_edit_dialog);
+        app.close().await;
+    }
+
+    #[tokio::test]
+    async fn apply_new_start_time_rejects_non_numeric_minute() {
+        let mut app = test_app().await;
+        app.edited_start_hour = "10".into();
+        app.edited_start_minute = "abc".into();
+
+        app.apply_new_start_time();
+
+        assert!(app.edit_error_message.is_some());
+        app.close().await;
+    }
+
+    #[tokio::test]
+    async fn apply_new_start_time_accepts_valid_input() {
+        let mut app = test_app().await;
+        app.session_id = Some(1);
+        app.edited_start_hour = "09".into();
+        app.edited_start_minute = "30".into();
+
+        app.apply_new_start_time();
+
+        assert!(app.edit_error_message.is_none());
+        assert!(!app.show_start_time_edit_dialog);
+        let start = app.start_time.expect("start_time should be set");
+        assert_eq!(start.hour(), 9);
+        assert_eq!(start.minute(), 30);
+        app.close().await;
+    }
+
+    #[tokio::test]
+    async fn apply_new_end_time_rejects_invalid_minute() {
+        let mut app = test_app().await;
+        app.edited_end_hour = "10".into();
+        app.edited_end_minute = "60".into();
+
+        app.apply_new_end_time();
+
+        assert!(app.edit_error_message.is_some());
+        app.close().await;
+    }
+}
