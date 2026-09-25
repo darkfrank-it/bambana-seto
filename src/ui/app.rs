@@ -11,13 +11,16 @@ use crate::database::db_manager::{self as dbManager, StoredSession};
 use rust_i18n::i18n;
 i18n!("locales");
 
+// Mappa data -> (descrizione -> durate delle sessioni)
+type TableData = BTreeMap<String, HashMap<String, Vec<Duration>>>;
+
 pub struct MyEguiApp {
     db: SqlitePool,
     current_window_title: String,
 
     pixels_per_point: f32,
 
-    table_data: BTreeMap<String, HashMap<String, Vec<Duration>>>,
+    table_data: TableData,
     table_data_totals: HashMap<String, Duration>,
     pending_session_recovery: Option<StoredSession>,
 
@@ -147,8 +150,8 @@ impl MyEguiApp {
             self.resume_start_time = Some(Utc::now());
             // richiama l'attenzione della finestra principale quando il popup è aperto
             notify_rust::Notification::new()
-                .summary(&t!("recovery_title").to_string())
-                .body(&t!("recovery_body").to_string())
+                .summary(t!("recovery_title").as_ref())
+                .body(t!("recovery_body").as_ref())
                 .show()
                 .unwrap();
         }
@@ -371,8 +374,8 @@ impl MyEguiApp {
         self.start_time = Some(Utc::now());
         self.elapsed = Duration::zero();
 
-        let start_time = if self.resume_start_time.is_some() {
-            self.resume_start_time.unwrap().timestamp()
+        let start_time = if let Some(resume_start_time) = self.resume_start_time {
+            resume_start_time.timestamp()
         } else {
             Utc::now().timestamp()
         };
@@ -420,7 +423,7 @@ impl MyEguiApp {
         let session_end = Utc::now()
             - self
                 .pending_idle_duration
-                .unwrap_or_else(|| Duration::zero());
+                .unwrap_or_else(Duration::zero);
         log::info!(
             "Ending session at: {}",
             session_end.format("%Y-%m-%d %H:%M:%S")
@@ -438,7 +441,7 @@ impl MyEguiApp {
         let elapsed = self.elapsed
             - self
                 .pending_idle_duration
-                .unwrap_or_else(|| Duration::zero());
+                .unwrap_or_else(Duration::zero);
         log::info!(
             "Adding session to table_data: date={}, desc={}, elapsed={}",
             date,
@@ -463,8 +466,8 @@ impl MyEguiApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         notify_rust::Notification::new()
-            .summary(&t!("idle_session_title").to_string())
-            .body(&t!("idle_session_body").to_string())
+            .summary(t!("idle_session_title").as_ref())
+            .body(t!("idle_session_body").as_ref())
             .show()
             .unwrap();
 
@@ -486,7 +489,7 @@ impl MyEguiApp {
                 let elapsed = Utc::now() - start_time;
                 let current = Utc::now() - elapsed;
 
-                let datetime: DateTime<Utc> = current.into();
+                let datetime: DateTime<Utc> = current;
                 let formatted = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
 
                 ui.heading(t!("idle_session_body"));
@@ -498,7 +501,7 @@ impl MyEguiApp {
                     t!("idle_time_label"),
                     format_duration(
                         self.pending_idle_duration
-                            .unwrap_or_else(|| Duration::zero()),
+                            .unwrap_or_else(Duration::zero),
                         DurationFormat::WithSeconds
                     )
                 ));
@@ -762,13 +765,12 @@ impl MyEguiApp {
                         .table_data_totals
                         .get(&date)
                         .cloned()
-                        .unwrap_or_else(|| Duration::zero());
+                        .unwrap_or_else(Duration::zero);
                     // Add active session time if it's for today
-                    if self.is_playing {
-                        if date == today {
-                            total_time = total_time + self.elapsed;
+                    if self.is_playing
+                        && date == today {
+                            total_time += self.elapsed;
                         }
-                    }
                     let total_time_label = format!(
                         "{}  {}              {}:  {}",
                         t!("date_label"),
@@ -800,7 +802,7 @@ impl MyEguiApp {
                                                 .table_data_totals
                                                 .get(&key)
                                                 .cloned()
-                                                .unwrap_or_else(|| Duration::zero());
+                                                .unwrap_or_else(Duration::zero);
 
                                             // 🔹 Riga principale (task)
                                             ui.horizontal(|ui| {
@@ -850,13 +852,8 @@ impl MyEguiApp {
 // ALTRE FUNZIONI
 
 // Trasforma le sessioni memorizzate in una struttura adatta per la visualizzazione nella tabella
-fn sessions_to_table_data(
-    sessions: &[StoredSession],
-) -> (
-    BTreeMap<String, HashMap<String, Vec<Duration>>>,
-    Option<StoredSession>,
-) {
-    let mut table_data: BTreeMap<String, HashMap<String, Vec<Duration>>> = BTreeMap::new();
+fn sessions_to_table_data(sessions: &[StoredSession]) -> (TableData, Option<StoredSession>) {
+    let mut table_data: TableData = BTreeMap::new();
     let mut pending_recovery: Option<StoredSession> = None;
 
     for session in sessions {

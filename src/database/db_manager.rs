@@ -19,15 +19,18 @@ pub fn ensure_sqlite_dir_and_db(database_url: &str) -> Result<(), std::io::Error
 
     let db_path = Path::new(path_str);
 
-    if let Some(parent) = db_path.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = db_path.parent()
+        && !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
         }
-    }
 
     // Aprire una connessione forza la creazione del DB
     if !db_path.exists() {
-        OpenOptions::new().create(true).write(true).open(db_path)?;
+        OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(db_path)?;
     }
 
     Ok(())

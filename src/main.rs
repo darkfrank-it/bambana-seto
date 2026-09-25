@@ -5,7 +5,6 @@ use std::path::Path;
 
 mod config;
 
-use confy;
 use log::LevelFilter;
 use rust_i18n::set_locale;
 use simplelog::{Config, WriteLogger};
@@ -91,11 +90,10 @@ fn load_icon() -> egui::IconData {
 pub fn ensure_log_dir(log_dir: &str) -> Result<(), std::io::Error> {
     let log_path = Path::new(log_dir);
 
-    if let Some(parent) = log_path.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = log_path.parent()
+        && !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
         }
-    }
 
     Ok(())
 }
