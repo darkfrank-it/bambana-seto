@@ -760,6 +760,39 @@ impl MyEguiApp {
                     .collect();
                 let today = Utc::now().format("%Y-%m-%d").to_string();
 
+                // Larghezze delle colonne misurate sul testo, per allineare le tabelle
+                // tra un giorno e l'altro e far occupare loro tutta la larghezza
+                let font_id = egui::TextStyle::Body.resolve(ui.style());
+                let ctx = ui.ctx().clone();
+                let text_width = |text: String| {
+                    ctx.fonts_mut(|f| {
+                        f.layout_no_wrap(text, font_id.clone(), egui::Color32::PLACEHOLDER)
+                            .size()
+                            .x
+                    })
+                };
+                let col_spacing = 16.0;
+                let task_col_min_width = entries
+                    .iter()
+                    .flat_map(|(_, tasks)| tasks.keys().cloned())
+                    .chain([t!("task_label").to_string(), t!("session_label").to_string()])
+                    .map(&text_width)
+                    .fold(0.0, f32::max);
+                // Larghezza minima di ogni colonna, esplicitata nella Grid qui sotto
+                let min_col_width = ui.spacing().interact_size.x;
+                let time_width = text_width("00:00:00".to_string());
+                // Larghezza delle colonne diverse da "Attività": pulsante ▶, totale, sessioni
+                let other_cols_width = (text_width("▶".to_string())
+                    + 2.0 * ui.spacing().button_padding.x)
+                    .max(min_col_width)
+                    + text_width(t!("total_time").to_string())
+                        .max(time_width)
+                        .max(min_col_width)
+                    + text_width(t!("sessions_header").to_string())
+                        .max(time_width)
+                        .max(min_col_width)
+                    + 3.0 * col_spacing;
+
                 for (date, tasks) in entries {
                     let mut total_time: Duration = self
                         .table_data_totals
@@ -785,13 +818,23 @@ impl MyEguiApp {
                         .default_open(open)
                         .show(ui, |ui| {
                             ui.group(|ui| {
+                                // Tutti i riquadri occupano la stessa larghezza
+                                ui.set_min_width(ui.available_width());
+                                // La colonna "Attività" si allarga per riempire il riquadro
+                                // (-1.0 evita che arrotondamenti facciano sforare la griglia)
+                                let task_col_width = task_col_min_width
+                                    .max(ui.available_width() - other_cols_width - 1.0);
                                 egui::Grid::new(format!("tasks_grid_{}", date))
                                     .striped(true) // righe alternate
-                                    .spacing([16.0, 6.0]) // spazio tra colonne/righe
+                                    .spacing([col_spacing, 6.0]) // spazio tra colonne/righe
+                                    .min_col_width(min_col_width)
                                     .show(ui, |ui| {
                                         // 🔹 Header tabella
                                         ui.label("");
-                                        ui.label(t!("task_label"));
+                                        ui.horizontal(|ui| {
+                                            ui.set_min_width(task_col_width);
+                                            ui.label(t!("task_label"));
+                                        });
                                         ui.label(t!("total_time"));
                                         ui.label(t!("sessions_header"));
                                         ui.end_row();
