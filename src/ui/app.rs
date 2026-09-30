@@ -792,8 +792,8 @@ impl MyEguiApp {
                                         // 🔹 Header tabella
                                         ui.label("");
                                         ui.label(t!("task_label"));
-                                        ui.label(t!("session_label"));
                                         ui.label(t!("total_time"));
+                                        ui.label(t!("sessions_header"));
                                         ui.end_row();
 
                                         for (desc, durations) in tasks {
@@ -803,6 +803,15 @@ impl MyEguiApp {
                                                 .get(&key)
                                                 .cloned()
                                                 .unwrap_or_else(Duration::zero);
+                                            // Add active session time if it's this task, today
+                                            let total_duration = if self.is_playing
+                                                && date == today
+                                                && desc == self.input_text
+                                            {
+                                                total_duration + self.elapsed
+                                            } else {
+                                                total_duration
+                                            };
 
                                             // 🔹 Riga principale (task)
                                             ui.horizontal(|ui| {
