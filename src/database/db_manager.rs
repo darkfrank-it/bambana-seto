@@ -131,6 +131,13 @@ pub async fn insert_session(
     Ok(result.last_insert_rowid())
 }
 
+// Ritorna l'id dell'unica sessione aperta (end_time NULL), se esiste.
+pub async fn find_open_session_id(pool: &SqlitePool) -> sqlx::Result<Option<i64>> {
+    sqlx::query_scalar("SELECT id FROM sessions WHERE end_time IS NULL LIMIT 1")
+        .fetch_optional(pool)
+        .await
+}
+
 pub async fn update_open_session(
     pool: &SqlitePool,
     id: i64,
@@ -287,6 +294,21 @@ mod tests {
         end_open_session(&pool, first_id, now + 60).await.unwrap();
         let third = insert_session(&pool, "task c", now + 120).await;
         assert!(third.is_ok());
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn find_open_session_id_returns_only_the_open_session() {
+        let pool = test_pool().await;
+        let now = Utc::now().timestamp();
+        assert_eq!(find_open_session_id(&pool).await.unwrap(), None);
+
+        let closed_id = insert_session(&pool, "task a", now).await.unwrap();
+        end_open_session(&pool, closed_id, now + 60).await.unwrap();
+        assert_eq!(find_open_session_id(&pool).await.unwrap(), None);
+
+        let open_id = insert_session(&pool, "task b", now + 120).await.unwrap();
+        assert_eq!(find_open_session_id(&pool).await.unwrap(), Some(open_id));
         pool.close().await;
     }
 

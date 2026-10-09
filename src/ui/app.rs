@@ -1,9 +1,11 @@
-use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Timelike, Utc};
 use eframe::egui::{self, CentralPanel, Ui};
 use egui::TextEdit;
 use rust_i18n::t;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
+use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::database::db_manager::{self as dbManager, StoredSession};
@@ -16,6 +18,11 @@ type TableData = BTreeMap<String, HashMap<String, Vec<Duration>>>;
 
 pub struct MyEguiApp {
     db: SqlitePool,
+    // Ultima scrittura sul DB accodata: ogni nuova scrittura attende la
+    // precedente, così le operazioni arrivano al DB nell'ordine in cui la UI
+    // le ha richieste (es. chiusura della sessione corrente prima
+    // dell'inserimento della successiva, vedi idx_one_open_session).
+    pending_db_write: Option<JoinHandle<()>>,
     current_window_title: String,
 
     pixels_per_point: f32,
@@ -107,6 +114,7 @@ impl MyEguiApp {
     ) -> Self {
         Self {
             db,
+            pending_db_write: None,
             current_window_title: t!("window_title").to_string(),
             table_data: BTreeMap::new(),
             table_data_totals: HashMap::new(),
@@ -161,10 +169,24 @@ impl MyEguiApp {
         self
     }
 
+    // Accoda una scrittura sul DB dopo quelle già in corso
+    fn spawn_db_write(&mut self, write: impl Future<Output = ()> + Send + 'static) {
+        let previous = self.pending_db_write.take();
+        self.pending_db_write = Some(tokio::spawn(async move {
+            if let Some(previous) = previous {
+                let _ = previous.await;
+            }
+            write.await;
+        }));
+    }
+
     // Allows closing a session at a specific end time
-    fn close_current_db_session_at(&self, id: i64, end_time: i64) {
+    fn close_current_db_session_at(&mut self, id: Option<i64>, end_time: i64) {
         let pool = self.db.clone();
-        tokio::spawn(async move {
+        self.spawn_db_write(async move {
+            let Some(id) = resolve_open_session_id(&pool, id).await else {
+                return;
+            };
             let result = dbManager::end_open_session(&pool, id, end_time).await;
 
             if let Err(err) = result {
@@ -174,9 +196,12 @@ impl MyEguiApp {
     }
 
     // Allows updating the description of the current session
-    fn update_current_db_session_at(&self, id: i64, description: String) {
+    fn update_current_db_session_at(&mut self, id: Option<i64>, description: String) {
         let pool = self.db.clone();
-        tokio::spawn(async move {
+        self.spawn_db_write(async move {
+            let Some(id) = resolve_open_session_id(&pool, id).await else {
+                return;
+            };
             let result = dbManager::update_open_session(&pool, id, &description).await;
 
             if let Err(err) = result {
@@ -185,9 +210,9 @@ impl MyEguiApp {
         });
     }
 
-    fn delete_db_session(&self, id: i64) {
+    fn delete_db_session(&mut self, id: i64) {
         let pool = self.db.clone();
-        tokio::spawn(async move {
+        self.spawn_db_write(async move {
             let result = dbManager::delete_session(&pool, id).await;
 
             if let Err(err) = result {
@@ -242,7 +267,7 @@ impl MyEguiApp {
     // Opens a dialog to edit the start time of the current session
     fn open_time_edit_dialog(&mut self) {
         // Pre-populate with current local time
-        let now = Utc::now();
+        let now = Local::now();
         self.edited_start_hour = format!("{:02}", now.hour());
         self.edited_start_minute = format!("{:02}", now.minute());
         self.edit_error_message = None;
@@ -250,7 +275,7 @@ impl MyEguiApp {
     }
 
     fn open_end_time_edit_dialog(&mut self) {
-        let now = Utc::now();
+        let now = Local::now();
         self.edited_end_date = now.format("%Y-%m-%d").to_string();
         self.edited_end_hour = format!("{:02}", now.hour());
         self.edited_end_minute = format!("{:02}", now.minute());
@@ -279,22 +304,27 @@ impl MyEguiApp {
         log::info!("Editing start time to: {:02}:{:02}", hour, minute);
 
         // Calculate new start_time as today at the specified hour:minute in Local time
-        let now = Utc::now();
-        let new_start_local = now
+        let new_start_local = Local::now()
             .date_naive()
             .and_hms_opt(hour, minute, 0)
             .expect("valid time");
 
-        let new_start_utc = new_start_local.and_utc();
+        let Some(new_start_utc) = local_to_utc(new_start_local) else {
+            self.edit_error_message = Some(t!("invalid_hour").to_string());
+            return;
+        };
 
         self.start_time = Some(new_start_utc);
         self.elapsed = Utc::now().signed_duration_since(new_start_utc);
 
-        let id = self.session_id.expect("No active session");
+        let id = self.session_id;
 
         // Update database asynchronously
         let pool = self.db.clone();
-        tokio::spawn(async move {
+        self.spawn_db_write(async move {
+            let Some(id) = resolve_open_session_id(&pool, id).await else {
+                return;
+            };
             if let Err(err) =
                 dbManager::update_open_session_start_time(&pool, id, new_start_utc.timestamp())
                     .await
@@ -330,15 +360,20 @@ impl MyEguiApp {
         log::info!("Editing end time to: {}", s);
 
         // Calculate new end_time
-        let naive = NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M").ok();
-
-        let new_end_utc = naive.expect("Expect end date!").and_utc();
+        let Ok(naive) = NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M") else {
+            self.edit_error_message = Some(t!("invalid_date").to_string());
+            return;
+        };
+        let Some(new_end_utc) = local_to_utc(naive) else {
+            self.edit_error_message = Some(t!("invalid_hour").to_string());
+            return;
+        };
 
         let id = self.session_id.expect("No active session");
 
         // Update database asynchronously
         let pool = self.db.clone();
-        tokio::spawn(async move {
+        self.spawn_db_write(async move {
             if let Err(err) = dbManager::end_open_session(&pool, id, new_end_utc.timestamp()).await
             {
                 log::error!("Failed to update session end time: {err}");
@@ -349,9 +384,8 @@ impl MyEguiApp {
 
         let date = self
             .start_time
-            .expect("expected stat_time")
-            .format("%Y-%m-%d")
-            .to_string();
+            .map(local_date)
+            .expect("expected stat_time");
         self.table_data
             .entry(date)
             .or_default()
@@ -391,7 +425,7 @@ impl MyEguiApp {
         let pool = self.db.clone();
         let tx = self.session_id_tx.clone();
 
-        tokio::spawn(async move {
+        self.spawn_db_write(async move {
             match dbManager::insert_session(&pool, &description, start_time).await {
                 Ok(id) => {
                     if let Err(err) = tx.send(id) {
@@ -412,10 +446,7 @@ impl MyEguiApp {
         } else {
             description.to_string()
         };
-        self.update_current_db_session_at(
-            self.session_id.expect("Sessione senza ID!"),
-            description,
-        );
+        self.update_current_db_session_at(self.session_id, description);
     }
 
     fn end_session(&mut self) {
@@ -428,16 +459,13 @@ impl MyEguiApp {
             "Ending session at: {}",
             session_end.format("%Y-%m-%d %H:%M:%S")
         );
-        let id = match self.session_id {
-            Some(id) => id,
-            None => {
-                log::error!("Expect session open");
-                return;
-            }
-        };
-        self.close_current_db_session_at(id, session_end.timestamp());
+        // Anche senza id (INSERT non ancora completato) la sessione va chiusa
+        // e registrata: altrimenti la UI resta bloccata con il timer fermo e
+        // il tempo trascorso va perso.
+        self.close_current_db_session_at(self.session_id, session_end.timestamp());
 
-        let date = Utc::now().format("%Y-%m-%d").to_string();
+        // Come al caricamento dal DB, la sessione appartiene al giorno in cui è iniziata
+        let date = local_date(self.start_time.unwrap_or_else(Utc::now));
         let elapsed = self.elapsed
             - self
                 .pending_idle_duration
@@ -489,7 +517,7 @@ impl MyEguiApp {
                 let elapsed = Utc::now() - start_time;
                 let current = Utc::now() - elapsed;
 
-                let datetime: DateTime<Utc> = current;
+                let datetime = current.with_timezone(&Local);
                 let formatted = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
 
                 ui.heading(t!("idle_session_body"));
@@ -558,7 +586,7 @@ impl MyEguiApp {
                     ));
 
                     let start_time = Utc.timestamp_opt(session.start_time, 0).single();
-                    let date = start_time.unwrap().format("%Y-%m-%d %H:%M").to_string();
+                    let date = start_time.unwrap().with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string();
                     ui.label(format!("{}: {}", t!("started_label"), date));
 
                     let afk_duration: Duration = Utc::now()
@@ -758,7 +786,7 @@ impl MyEguiApp {
                     .rev()
                     .map(|(date, tasks)| (date.clone(), tasks.clone()))
                     .collect();
-                let today = Utc::now().format("%Y-%m-%d").to_string();
+                let today = local_date(Utc::now());
 
                 // Larghezze delle colonne misurate sul testo, per allineare le tabelle
                 // tra un giorno e l'altro e far occupare loro tutta la larghezza
@@ -903,6 +931,43 @@ impl MyEguiApp {
 
 // ALTRE FUNZIONI
 
+// Giorno (in ora locale) a cui appartiene un istante, usato come chiave della
+// tabella: una sessione iniziata dopo mezzanotte locale non deve finire nel
+// giorno precedente solo perché in UTC è ancora "ieri".
+fn local_date(dt: DateTime<Utc>) -> String {
+    dt.with_timezone(&Local).format("%Y-%m-%d").to_string()
+}
+
+// Converte un orario inserito dall'utente (ora locale) in UTC. Ritorna None
+// per gli orari inesistenti nel passaggio all'ora legale; per quelli ambigui
+// del ritorno all'ora solare sceglie il primo.
+fn local_to_utc(naive: NaiveDateTime) -> Option<DateTime<Utc>> {
+    naive
+        .and_local_timezone(Local)
+        .earliest()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+// Ritorna l'id della sessione aperta. Se la UI non ha ancora ricevuto l'id
+// dall'INSERT, lo cerca nel DB: le scritture sono serializzate, quindi a questo
+// punto l'INSERT è già stato eseguito, e può esistere una sola sessione aperta.
+async fn resolve_open_session_id(pool: &SqlitePool, id: Option<i64>) -> Option<i64> {
+    if id.is_some() {
+        return id;
+    }
+    match dbManager::find_open_session_id(pool).await {
+        Ok(Some(id)) => Some(id),
+        Ok(None) => {
+            log::error!("No open session found in database");
+            None
+        }
+        Err(err) => {
+            log::error!("Failed to look up open session: {err}");
+            None
+        }
+    }
+}
+
 // Trasforma le sessioni memorizzate in una struttura adatta per la visualizzazione nella tabella
 fn sessions_to_table_data(sessions: &[StoredSession]) -> (TableData, Option<StoredSession>) {
     let mut table_data: TableData = BTreeMap::new();
@@ -911,13 +976,13 @@ fn sessions_to_table_data(sessions: &[StoredSession]) -> (TableData, Option<Stor
     for session in sessions {
         // Solo sessioni con end_time valorizzato (sessioni concluse)
         if let Some(duration) = session_duration(session) {
-            // Converti timestamp → DateTime<Local>
+            // Converti timestamp → DateTime<Utc>
             let start_time = match Utc.timestamp_opt(session.start_time, 0).single() {
                 Some(dt) => dt,
                 None => continue, // timestamp non valido
             };
 
-            let date = start_time.format("%Y-%m-%d").to_string();
+            let date = local_date(start_time);
 
             table_data
                 .entry(date)
@@ -1073,17 +1138,46 @@ mod tests {
         let (table_data, pending) = sessions_to_table_data(&sessions);
 
         assert!(pending.is_none());
-        let date = Utc
-            .timestamp_opt(1_700_000_000, 0)
-            .single()
-            .unwrap()
-            .format("%Y-%m-%d")
-            .to_string();
+        let date = local_date(Utc.timestamp_opt(1_700_000_000, 0).single().unwrap());
         let durations = table_data.get(&date).unwrap().get("task a").unwrap();
         assert_eq!(
             durations,
             &vec![Duration::seconds(60), Duration::seconds(120)]
         );
+    }
+
+    #[test]
+    fn sessions_to_table_data_groups_by_local_start_date() {
+        // 00:30 locali del 10 ottobre: in UTC (con fuso positivo) è ancora il 9
+        let start = local_to_utc(
+            NaiveDateTime::parse_from_str("2026-10-10 00:30", "%Y-%m-%d %H:%M").unwrap(),
+        )
+        .unwrap();
+        let sessions = vec![StoredSession {
+            id: 1,
+            description: "task a".into(),
+            start_time: start.timestamp(),
+            end_time: Some(start.timestamp() + 60),
+        }];
+
+        let (table_data, _) = sessions_to_table_data(&sessions);
+
+        assert_eq!(table_data.keys().collect::<Vec<_>>(), vec!["2026-10-10"]);
+    }
+
+    #[test]
+    fn local_date_uses_local_calendar_day() {
+        let just_after_midnight = local_to_utc(
+            NaiveDateTime::parse_from_str("2026-10-10 00:05", "%Y-%m-%d %H:%M").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(local_date(just_after_midnight), "2026-10-10");
+
+        let just_before_midnight = local_to_utc(
+            NaiveDateTime::parse_from_str("2026-10-09 23:55", "%Y-%m-%d %H:%M").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(local_date(just_before_midnight), "2026-10-09");
     }
 
     #[test]
@@ -1204,9 +1298,71 @@ mod tests {
 
         assert!(app.edit_error_message.is_none());
         assert!(!app.show_start_time_edit_dialog);
-        let start = app.start_time.expect("start_time should be set");
+        // L'orario inserito è in ora locale
+        let start = app
+            .start_time
+            .expect("start_time should be set")
+            .with_timezone(&Local);
         assert_eq!(start.hour(), 9);
         assert_eq!(start.minute(), 30);
+        app.close().await;
+    }
+
+    // ---- serializzazione delle scritture sul DB ----
+
+    // Attende che tutte le scritture sul DB accodate siano state eseguite
+    async fn flush_db_writes(app: &mut TestApp) {
+        if let Some(handle) = app.pending_db_write.take() {
+            handle.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn switching_task_closes_previous_session_before_inserting_next() {
+        let mut app = test_app().await;
+        app.input_text = "task a".into();
+        app.begin_session();
+        flush_db_writes(&mut app).await;
+        let first_id = app.session_id_rx.try_recv().expect("first session id");
+        app.session_id = Some(first_id);
+
+        // Come il pulsante ▶ di una riga: chiude la sessione e ne apre subito
+        // un'altra, senza attendere le scritture asincrone.
+        app.end_session();
+        app.input_text = "task b".into();
+        app.begin_session();
+        flush_db_writes(&mut app).await;
+
+        let second_id = app.session_id_rx.try_recv().expect("second session id");
+        let sessions = dbManager::load_recent_sessions(&app.db).await.unwrap();
+        let first = sessions.iter().find(|s| s.id == first_id).unwrap();
+        let second = sessions.iter().find(|s| s.id == second_id).unwrap();
+        assert!(first.end_time.is_some());
+        assert_eq!(second.description, "task b");
+        assert_eq!(second.end_time, None);
+        app.close().await;
+    }
+
+    #[tokio::test]
+    async fn end_session_without_session_id_still_closes_and_records_it() {
+        let mut app = test_app().await;
+        app.input_text = "task a".into();
+        app.begin_session();
+        // L'id dell'INSERT non è ancora arrivato alla UI
+        assert_eq!(app.session_id, None);
+
+        app.end_session();
+        flush_db_writes(&mut app).await;
+
+        assert!(!app.is_playing);
+        assert_eq!(app.elapsed, Duration::zero());
+        assert!(app.input_text.is_empty());
+        let today = local_date(Utc::now());
+        assert!(app.table_data[&today].contains_key("task a"));
+
+        let sessions = dbManager::load_recent_sessions(&app.db).await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].end_time.is_some());
         app.close().await;
     }
 
@@ -1219,6 +1375,44 @@ mod tests {
         app.apply_new_end_time();
 
         assert!(app.edit_error_message.is_some());
+        app.close().await;
+    }
+
+    #[tokio::test]
+    async fn apply_new_end_time_rejects_invalid_date() {
+        let mut app = test_app().await;
+        app.session_id = Some(1);
+        app.edited_end_date = "2026-13-40".into();
+        app.edited_end_hour = "10".into();
+        app.edited_end_minute = "00".into();
+
+        app.apply_new_end_time();
+
+        assert!(app.edit_error_message.is_some());
+        app.close().await;
+    }
+
+    #[tokio::test]
+    async fn apply_new_end_time_interprets_input_as_local_time() {
+        let mut app = test_app().await;
+        let start = NaiveDateTime::parse_from_str("2026-10-09 08:00", "%Y-%m-%d %H:%M").unwrap();
+        app.session_id = Some(1);
+        app.start_time = local_to_utc(start);
+        app.input_text = "task a".into();
+        app.edited_end_date = "2026-10-09".into();
+        app.edited_end_hour = "09".into();
+        app.edited_end_minute = "30".into();
+
+        app.apply_new_end_time();
+
+        assert!(app.edit_error_message.is_none());
+        // 08:00 → 09:30 locali, indipendentemente dal fuso orario della macchina
+        let durations: Vec<Duration> = app
+            .table_data
+            .values()
+            .flat_map(|tasks| tasks["task a"].clone())
+            .collect();
+        assert_eq!(durations, vec![Duration::minutes(90)]);
         app.close().await;
     }
 }
