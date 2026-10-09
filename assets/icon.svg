@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Bambana, seto! — cronometro con il tempo trascorso evidenziato -->
+  <!-- Pulsante superiore e pulsante laterale -->
+  <rect x="106" y="8" width="44" height="22" rx="8" fill="#2A75AD"/>
+  <rect x="117" y="24" width="22" height="36" fill="#2A75AD"/>
+  <rect x="117" y="40" width="22" height="24" rx="5" fill="#2A75AD" transform="rotate(45 128 150)"/>
+  <!-- Cassa e quadrante -->
+  <circle cx="128" cy="150" r="100" fill="#2A75AD"/>
+  <circle cx="128" cy="150" r="78" fill="#FFF4E0"/>
+  <!-- Tempo trascorso: da mezzogiorno alle 4 -->
+  <path d="M128 150 L128 86 A64 64 0 0 1 183.43 182 Z" fill="#FF6B3D"/>
+  <!-- Lancetta e perno -->
+  <line x1="128" y1="150" x2="182" y2="181.2" stroke="#2A75AD" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="128" cy="150" r="13" fill="#2A75AD"/>
+</svg>
