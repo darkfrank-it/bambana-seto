@@ -97,10 +97,13 @@ pub async fn open_db(database_url: &str) -> sqlx::Result<SqlitePool> {
     Ok(pool)
 }
 
-pub async fn load_recent_sessions(pool: &SqlitePool) -> sqlx::Result<Vec<StoredSession>> {
+pub async fn load_recent_sessions(
+    pool: &SqlitePool,
+    history_days: u32,
+) -> sqlx::Result<Vec<StoredSession>> {
     let now = Utc::now().timestamp();
 
-    let seven_days_ago = now - 7 * 24 * 60 * 60;
+    let history_start = now - i64::from(history_days) * 24 * 60 * 60;
 
     let sessions = sqlx::query_as::<_, StoredSession>(
         r#"
@@ -110,7 +113,7 @@ pub async fn load_recent_sessions(pool: &SqlitePool) -> sqlx::Result<Vec<StoredS
         ORDER BY start_time DESC
         "#,
     )
-    .bind(seven_days_ago)
+    .bind(history_start)
     .fetch_all(pool)
     .await?;
 
@@ -248,7 +251,7 @@ mod tests {
         let id = insert_session(&pool, "task a", now).await.unwrap();
         assert!(id > 0);
 
-        let sessions = load_recent_sessions(&pool).await.unwrap();
+        let sessions = load_recent_sessions(&pool, 7).await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, id);
         assert_eq!(sessions[0].description, "task a");
@@ -271,7 +274,7 @@ mod tests {
             .unwrap();
         insert_session(&pool, "recent task", now).await.unwrap();
 
-        let sessions = load_recent_sessions(&pool).await.unwrap();
+        let sessions = load_recent_sessions(&pool, 7).await.unwrap();
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].description, "recent task");
@@ -351,7 +354,7 @@ mod tests {
         let deleted = delete_session(&pool, id).await.unwrap();
         assert!(deleted);
 
-        let sessions = load_recent_sessions(&pool).await.unwrap();
+        let sessions = load_recent_sessions(&pool, 7).await.unwrap();
         assert!(sessions.is_empty());
         pool.close().await;
     }

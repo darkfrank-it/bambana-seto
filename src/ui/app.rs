@@ -1334,7 +1334,7 @@ mod tests {
         flush_db_writes(&mut app).await;
 
         let second_id = app.session_id_rx.try_recv().expect("second session id");
-        let sessions = dbManager::load_recent_sessions(&app.db).await.unwrap();
+        let sessions = dbManager::load_recent_sessions(&app.db, 7).await.unwrap();
         let first = sessions.iter().find(|s| s.id == first_id).unwrap();
         let second = sessions.iter().find(|s| s.id == second_id).unwrap();
         assert!(first.end_time.is_some());
@@ -1360,7 +1360,7 @@ mod tests {
         let today = local_date(Utc::now());
         assert!(app.table_data[&today].contains_key("task a"));
 
-        let sessions = dbManager::load_recent_sessions(&app.db).await.unwrap();
+        let sessions = dbManager::load_recent_sessions(&app.db, 7).await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert!(sessions[0].end_time.is_some());
         app.close().await;

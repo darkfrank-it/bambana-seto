@@ -37,7 +37,7 @@ async fn main() -> eframe::Result {
     let db = dbManager::open_db(&database_url)
         .await
         .map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
-    let sessions = dbManager::load_recent_sessions(&db)
+    let sessions = dbManager::load_recent_sessions(&db, config.history_days)
         .await
         .unwrap_or_default();
 

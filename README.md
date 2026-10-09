@@ -98,6 +98,7 @@ database_path = ".data/bambana.db"
 locale = "en"
 pixels_per_point = 1.2
 idle_period_secs = 600
+history_days = 7
 ```
 
 - `log_path`: path for the log file
@@ -105,6 +106,7 @@ idle_period_secs = 600
 - `locale`: supported values are `en` and `it`
 - `pixels_per_point`: UI scaling value for high-DPI screens
 - `idle_period_secs`: Configurable idle timeout
+- `history_days`: how many days of past sessions are loaded at startup
 
 A relative path like `.data/bambana.db` is resolved from the application’s working directory.
 
