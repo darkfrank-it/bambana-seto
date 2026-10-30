@@ -16,6 +16,10 @@ i18n!("locales");
 // Mappa data -> (descrizione -> durate delle sessioni)
 type TableData = BTreeMap<String, HashMap<String, Vec<Duration>>>;
 
+// Numero massimo di caratteri di una descrizione usati per calcolare la
+// larghezza della colonna "Attività"
+const MAX_TASK_WIDTH_CHARS: usize = 50;
+
 pub struct MyEguiApp {
     db: SqlitePool,
     // Ultima scrittura sul DB accodata: ogni nuova scrittura attende la
@@ -800,9 +804,12 @@ impl MyEguiApp {
                     })
                 };
                 let col_spacing = 16.0;
+                // Le descrizioni più lunghe di MAX_TASK_WIDTH_CHARS non allargano
+                // ulteriormente la colonna: vanno a capo (vedi sotto)
                 let task_col_min_width = entries
                     .iter()
-                    .flat_map(|(_, tasks)| tasks.keys().cloned())
+                    .flat_map(|(_, tasks)| tasks.keys())
+                    .map(|desc| desc.chars().take(MAX_TASK_WIDTH_CHARS).collect::<String>())
                     .chain([t!("task_label").to_string(), t!("session_label").to_string()])
                     .map(&text_width)
                     .fold(0.0, f32::max);
@@ -896,7 +903,17 @@ impl MyEguiApp {
                                                 }
                                             });
 
-                                            ui.label(&desc);
+                                            // Larghezza fissa, così le descrizioni lunghe vanno a capo
+                                            // (il testo è impaginato prima, così la riga della
+                                            // griglia prende l'altezza giusta e non si sovrappone)
+                                            let galley = egui::WidgetText::from(desc.as_str())
+                                                .into_galley(
+                                                    ui,
+                                                    Some(egui::TextWrapMode::Wrap),
+                                                    task_col_width,
+                                                    egui::TextStyle::Body,
+                                                );
+                                            ui.label(galley);
 
                                             ui.label(format_duration(
                                                 total_duration,
